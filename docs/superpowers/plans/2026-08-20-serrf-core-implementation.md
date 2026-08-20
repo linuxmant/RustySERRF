@@ -58,7 +58,7 @@ csv = "1.3"
 rand = "0.8"
 rand_chacha = "0.3"
 nalgebra = "0.32"
-plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "line_series"] }
+plotters = "0.3"
 thiserror = "1.0"
 
 [dev-dependencies]
@@ -1501,9 +1501,13 @@ git commit -m "Add random forest ensemble mirroring ranger's regression defaults
 
 This ports `serrfR` (`app.R` lines 402-699). **Read those lines side-by-side while implementing**
 — the steps below follow the same structure (zero/NA jitter fix → per-batch correlation precompute
-→ per-compound loop: variable selection, RF train/predict, rescale, outlier patch → final QC/target
-median rescale) but variable/function names differ since this is idiomatic Rust, not a line-by-line
-transliteration.
+→ per-compound loop: variable selection, RF train/predict, rescale, negative-value fallback → final
+QC/target median rescale) but variable/function names differ since this is idiomatic Rust, not a line-by-line
+transliteration. One piece of `serrfR` is deliberately **not** ported: the secondary
+boxplot.stats-based outlier swap at `app.R` lines 604-617 (comparing an "out"/"attempt" pair of
+means and conditionally substituting). It's a minor secondary correction on top of the main
+rescale, and the pipeline's statistical-equivalence validation (Task 16) is the right place to
+notice if its absence matters — do not add it back in without a failing Task 16 test motivating it.
 
 **Files:**
 - Create: `crates/serrf-core/src/serrf.rs`
