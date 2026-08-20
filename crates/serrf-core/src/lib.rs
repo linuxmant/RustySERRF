@@ -5,6 +5,7 @@ pub mod parse;
 pub mod preprocess;
 pub mod rsd;
 pub mod validate;
+mod tree;
 
 pub fn crate_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
