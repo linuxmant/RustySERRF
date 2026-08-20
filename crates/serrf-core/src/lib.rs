@@ -1,6 +1,7 @@
 pub mod correlation;
 pub mod dataset;
 pub mod error;
+pub mod forest;
 pub mod parse;
 pub mod preprocess;
 pub mod rsd;
