@@ -2,6 +2,7 @@ pub mod dataset;
 pub mod error;
 pub mod parse;
 pub mod preprocess;
+pub mod rsd;
 pub mod validate;
 
 pub fn crate_version() -> &'static str {
