@@ -1,6 +1,7 @@
 pub mod dataset;
 pub mod error;
 pub mod parse;
+pub mod validate;
 
 pub fn crate_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
