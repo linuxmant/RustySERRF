@@ -1,0 +1,13 @@
+[package]
+name = "serrf-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serrf-core = { path = "../serrf-core" }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
