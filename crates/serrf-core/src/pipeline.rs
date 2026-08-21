@@ -175,4 +175,72 @@ mod tests {
         };
         assert!(median(&output.qc_rsd_serrf) <= median(&output.qc_rsd_raw));
     }
+
+    /// Builds a dataset with an extra "validate"-type group (a validate sample type distinct
+    /// from "qc"/"sample") and a couple of blank/`None` sampleType columns, so we can exercise
+    /// the validate-type branch and the None-sampleType passthrough branch of `normalize()`
+    /// directly. `ValidatedSamples` is constructed by hand here (bypassing `validate::validate`),
+    /// so the per-batch QC-count constraint that function enforces doesn't apply.
+    fn synthetic_dataset_with_validate_and_blank() -> (Dataset, ValidatedSamples) {
+        let n_compounds = 5;
+        let n_qc = 12;
+        let n_sample = 8;
+        let n_validate = 8;
+        let n_blank = 2;
+        let n = n_qc + n_sample + n_validate + n_blank;
+        let mut values = Array2::<f64>::zeros((n_compounds, n));
+        let mut batch = Vec::new();
+        let mut sample_type = Vec::new();
+        let mut time = Vec::new();
+        for j in 0..n {
+            let b = if j % 4 < 2 { "A" } else { "B" };
+            let drift = if b == "A" { 0.0 } else { 8.0 };
+            batch.push(b.to_string());
+            let st = if j < n_qc {
+                Some("qc".to_string())
+            } else if j < n_qc + n_sample {
+                Some("sample".to_string())
+            } else if j < n_qc + n_sample + n_validate {
+                Some("validate".to_string())
+            } else {
+                None
+            };
+            sample_type.push(st);
+            time.push(j as f64);
+            for i in 0..n_compounds {
+                values[[i, j]] = 100.0 + drift + (j as f64 % 3.0);
+            }
+        }
+        let dataset = Dataset {
+            samples: RawSampleTable { label: (0..n).map(|i| format!("s{i}")).collect(), columns: HashMap::new() },
+            compounds: RawCompoundTable { label: (0..n_compounds).map(|i| format!("c{i}")).collect(), columns: HashMap::new() },
+            values,
+        };
+        let samples = ValidatedSamples { label: dataset.samples.label.clone(), batch, sample_type, time };
+        (dataset, samples)
+    }
+
+    #[test]
+    fn produces_validate_type_rsd_entries_and_passes_through_blank_columns() {
+        let (dataset, samples) = synthetic_dataset_with_validate_and_blank();
+        let config = SerrfConfig { num_vars: 3, seed: 1, cv_folds: 3 };
+        let output = normalize(&dataset, &samples, &config, |_| {}).unwrap();
+
+        let n_compounds = dataset.values.nrows();
+
+        // The "validate" sample-type group must produce raw/serrf RSD entries, one per compound.
+        assert!(output.validate_rsd_raw.contains_key("validate"), "expected a 'validate' entry in validate_rsd_raw");
+        assert!(output.validate_rsd_serrf.contains_key("validate"), "expected a 'validate' entry in validate_rsd_serrf");
+        assert_eq!(output.validate_rsd_raw["validate"].len(), n_compounds);
+        assert_eq!(output.validate_rsd_serrf["validate"].len(), n_compounds);
+
+        // Blank/None sampleType columns must pass through unnormalized: serrf == raw exactly.
+        let blank_cols: Vec<usize> = (0..samples.sample_type.len()).filter(|&c| samples.sample_type[c].is_none()).collect();
+        assert_eq!(blank_cols.len(), 2, "expected exactly the 2 blank columns from the fixture");
+        for &c in &blank_cols {
+            for i in 0..n_compounds {
+                assert_eq!(output.serrf[[i, c]], output.raw[[i, c]], "blank column {c} row {i} should pass through unnormalized");
+            }
+        }
+    }
 }
