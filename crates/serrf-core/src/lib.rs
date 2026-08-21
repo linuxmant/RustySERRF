@@ -4,6 +4,7 @@ pub mod dataset;
 pub mod error;
 pub mod forest;
 pub mod parse;
+pub mod pca;
 pub mod preprocess;
 pub mod rsd;
 pub mod serrf;
