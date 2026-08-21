@@ -24,7 +24,11 @@ pub(crate) fn build_tree(x: &[Vec<f64>], y: &[f64], indices: &[usize], config: &
     let mut best: Option<(usize, f64, f64)> = None;
     for &feature in candidate_features {
         let mut vals: Vec<f64> = indices.iter().map(|&i| x[i][feature]).collect();
-        vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        // total_cmp (not partial_cmp().unwrap()) so a non-finite feature value (e.g. a
+        // correlated compound that is itself all-Inf/all-NaN, selected as a regressor by
+        // serrf::serrf_normalize_group before extract_infinite_rows has a chance to strip it)
+        // can never panic a tree split search. See C1's defense-in-depth fix.
+        vals.sort_by(|a, b| a.total_cmp(b));
         vals.dedup();
         for w in vals.windows(2) {
             let threshold = (w[0] + w[1]) / 2.0;

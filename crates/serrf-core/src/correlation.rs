@@ -14,7 +14,7 @@ pub fn spearman_corr_matrix(data: &Array2<f64>) -> Array2<f64> {
 
 fn rank(values: &[f64]) -> Vec<f64> {
     let mut idx: Vec<usize> = (0..values.len()).collect();
-    idx.sort_by(|&a, &b| values[a].partial_cmp(&values[b]).unwrap());
+    idx.sort_by(|&a, &b| values[a].total_cmp(&values[b]));
     let mut ranks = vec![0.0; values.len()];
     let mut i = 0;
     while i < idx.len() {
@@ -61,7 +61,7 @@ pub fn select_variables(corr_train: &Array2<f64>, corr_target: &Array2<f64>, com
 
 fn top_n_by_abs(values: &[f64], n: usize) -> Vec<usize> {
     let mut idx: Vec<usize> = (0..values.len()).collect();
-    idx.sort_by(|&a, &b| values[b].abs().partial_cmp(&values[a].abs()).unwrap());
+    idx.sort_by(|&a, &b| values[b].abs().total_cmp(&values[a].abs()));
     idx.into_iter().take(n.min(values.len())).collect()
 }
 
