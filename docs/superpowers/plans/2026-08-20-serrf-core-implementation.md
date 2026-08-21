@@ -2231,6 +2231,25 @@ git commit -m "Wire up full SERRF pipeline orchestration"
 
 ### Task 16: Golden-file statistical-equivalence integration test
 
+**Named candidate discrepancy sources (found during Task 12's review, not yet acted on):** if this
+task's tolerance/correlation thresholds don't pass against the real dataset, check these two first
+before assuming the RF is simply too different from `ranger` — both are known, documented gaps
+between `serrf.rs` and `app.R`, deliberately deferred to this task rather than fixed blind:
+1. **Final rescale is whole-group, not per-batch.** `app.R` lines 594/597 run the QC/target
+   median-rescale *inside* the per-batch loop (forcing each batch's own subset median to match the
+   whole-group median independently, batch by batch); `serrf.rs`'s `rescale_to_median` calls run
+   once, after the loop, over the combined all-batches pool. This is a real structural
+   simplification (inherited from this plan's own Task 12 code, not an implementer deviation) that
+   drops a second alignment mechanism R has. If real (noisier, less-collinear) data shows residual
+   inter-batch RSD that the synthetic Task 12 test didn't reveal, this is the first place to look.
+2. **The "c factor" QC-rescale step (`app.R` lines 655-658) is not ported at all**, and unlike the
+   `boxplot.stats` outlier swap (lines 604-617, explicitly excluded by name in Task 12's brief),
+   this omission was never called out anywhere in this plan — it was simply missed when Task 12's
+   brief was written, despite being inside the cited line range (402-699). It rescales QC values
+   post-hoc based on a ratio involving raw QC/target medians and standard deviations vs. the
+   normalized target's median/sd. If golden-file QC RSD specifically (as opposed to sample/target
+   RSD) is where the mismatch concentrates, this step is the likely cause.
+
 **Files:**
 - Create: `crates/serrf-core/tests/golden_normalize.rs`
 
