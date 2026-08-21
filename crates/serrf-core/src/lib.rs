@@ -1,4 +1,5 @@
 pub mod correlation;
+pub mod cv;
 pub mod dataset;
 pub mod error;
 pub mod forest;
