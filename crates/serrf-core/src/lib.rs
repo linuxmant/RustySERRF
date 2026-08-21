@@ -5,11 +5,14 @@ pub mod error;
 pub mod forest;
 pub mod parse;
 pub mod pca;
+pub mod pipeline;
 pub mod preprocess;
 pub mod rsd;
 pub mod serrf;
 pub mod validate;
 mod tree;
+
+pub use pipeline::{normalize, PipelineOutput, Progress, SerrfConfig};
 
 pub fn crate_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
