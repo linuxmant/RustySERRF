@@ -7,7 +7,10 @@ edition = "2021"
 serrf-core = { path = "../serrf-core" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
+csv = "1"
+ndarray = "0.15"
 
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
+tempfile = "3"
