@@ -5,6 +5,7 @@ pub mod forest;
 pub mod parse;
 pub mod preprocess;
 pub mod rsd;
+pub mod serrf;
 pub mod validate;
 mod tree;
 
