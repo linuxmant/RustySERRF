@@ -49,7 +49,14 @@ pub fn validate(dataset: &Dataset) -> Result<ValidatedSamples, SerrfError> {
         .ok_or_else(|| SerrfError::Validation("Your data must have 'batch'. Please see example data for more information.".into()))?
         .clone();
 
+    // Every distinct batch must have an entry, even one with zero QC rows — otherwise a batch
+    // with samples but no QC at all never appears in the map and the `<6` check below can't see
+    // it (C2). This mirrors app.R:262's `table(p$batch, p$sampleType)[,'qc'] < 6`, where a
+    // contingency table always has a row for every batch level regardless of QC count.
     let mut qc_counts: HashMap<&str, usize> = HashMap::new();
+    for b in &batch {
+        qc_counts.entry(b.as_str()).or_insert(0);
+    }
     for (b, t) in batch.iter().zip(sample_type.iter()) {
         if t.as_deref() == Some("qc") {
             *qc_counts.entry(b.as_str()).or_insert(0) += 1;
@@ -133,6 +140,26 @@ mod tests {
         cols.remove("batch");
         let dataset = dataset_with_samples(cols, 8);
         assert!(validate(&dataset).unwrap_err().to_string().contains("batch"));
+    }
+
+    #[test]
+    fn rejects_a_batch_that_has_samples_but_zero_qc() {
+        // C2: batch A has 6 QC + 2 samples; batch B has samples only (0 QC). The old
+        // `qc_counts` map only gained an entry when a row's sampleType was "qc", so batch B
+        // never appeared in the map and the `<6` check couldn't see it, letting this through
+        // and later panicking in `serrf.rs` (mean of an empty qc_cols slice is 0.0/0.0 = NaN).
+        let mut cols = HashMap::new();
+        let sample_type: Vec<String> = vec!["qc", "qc", "qc", "qc", "qc", "qc", "sample", "sample", "sample", "sample"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let batch: Vec<String> = vec!["A", "A", "A", "A", "A", "A", "A", "A", "B", "B"].iter().map(|s| s.to_string()).collect();
+        cols.insert("sampleType".into(), sample_type);
+        cols.insert("time".into(), (1..=10).map(|i| i.to_string()).collect());
+        cols.insert("batch".into(), batch);
+        let dataset = dataset_with_samples(cols, 10);
+        let err = validate(&dataset).unwrap_err().to_string();
+        assert!(err.contains("QC"), "expected a QC-count error, got: {err}");
     }
 
     #[test]
