@@ -1,4 +1,5 @@
 use clap::Parser;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -18,9 +19,18 @@ fn main() -> anyhow::Result<()> {
         println!("[{}] {}/{}", p.stage, p.current, p.total);
     })?;
 
-    write_matrix_csv(&args.output_dir.join("normalized-raw.csv"), &dataset.compounds.label, &output.raw)?;
-    write_matrix_csv(&args.output_dir.join("normalized-serrf.csv"), &dataset.compounds.label, &output.serrf)?;
-    write_rsd_csv(&args.output_dir.join("qc-rsds.csv"), &dataset.compounds.label, &output.qc_rsd_raw, &output.qc_rsd_serrf)?;
+    // Named "imputed", not "raw": `output.raw` is `dataset.values` after `impute_missing` has
+    // already filled in missing cells (pipeline.rs), so it is not the literal raw input matrix.
+    write_matrix_csv(&args.output_dir.join("normalized-imputed.csv"), &output.sample_order, &dataset.compounds.label, &output.raw)?;
+    write_matrix_csv(&args.output_dir.join("normalized-serrf.csv"), &output.sample_order, &dataset.compounds.label, &output.serrf)?;
+    write_rsd_csv(
+        &args.output_dir.join("qc-rsds.csv"),
+        &dataset.compounds.label,
+        &output.qc_rsd_raw,
+        &output.qc_rsd_serrf,
+        &output.validate_rsd_raw,
+        &output.validate_rsd_serrf,
+    )?;
 
     let sds_before: Vec<f64> = (0..dataset.values.nrows()).map(|i| std_dev(&output.raw.row(i).to_vec())).collect();
     let pca_before = serrf_core::pca::pca_first_two(&filter_rows_with_variance(&output.raw, &sds_before));
@@ -49,10 +59,13 @@ fn filter_rows_with_variance(matrix: &ndarray::Array2<f64>, sds: &[f64]) -> ndar
     matrix.select(ndarray::Axis(0), &keep)
 }
 
-fn write_matrix_csv(path: &std::path::Path, labels: &[String], matrix: &ndarray::Array2<f64>) -> anyhow::Result<()> {
+fn write_matrix_csv(path: &std::path::Path, sample_labels: &[String], compound_labels: &[String], matrix: &ndarray::Array2<f64>) -> anyhow::Result<()> {
     let mut writer = csv::Writer::from_path(path)?;
-    writer.write_record(std::iter::once("label".to_string()).chain((0..matrix.ncols()).map(|i| format!("sample{i}"))))?;
-    for (i, label) in labels.iter().enumerate() {
+    // Use the pipeline's real sample labels (`PipelineOutput::sample_order`) as column headers,
+    // not generic `sample0`/`sample1` placeholders (I5), so the CSV can be joined back to sample
+    // metadata (batch/time/type).
+    writer.write_record(std::iter::once("label".to_string()).chain(sample_labels.iter().cloned()))?;
+    for (i, label) in compound_labels.iter().enumerate() {
         let mut row = vec![label.clone()];
         row.extend(matrix.row(i).iter().map(|v| v.to_string()));
         writer.write_record(&row)?;
@@ -61,11 +74,35 @@ fn write_matrix_csv(path: &std::path::Path, labels: &[String], matrix: &ndarray:
     Ok(())
 }
 
-fn write_rsd_csv(path: &std::path::Path, labels: &[String], raw: &[f64], serrf: &[f64]) -> anyhow::Result<()> {
+fn write_rsd_csv(
+    path: &std::path::Path,
+    labels: &[String],
+    raw: &[f64],
+    serrf: &[f64],
+    validate_rsd_raw: &HashMap<String, Vec<f64>>,
+    validate_rsd_serrf: &HashMap<String, Vec<f64>>,
+) -> anyhow::Result<()> {
     let mut writer = csv::Writer::from_path(path)?;
-    writer.write_record(["label", "QC_none", "QC_SERRF"])?;
+    // Extra `{type}_none`/`{type}_SERRF` columns for each validate-type sampleType the pipeline
+    // found (I5), matching R's reference `qc-rsds.csv` format (which has `validate_none`/
+    // `validate_SERRF` columns) instead of silently dropping this already-computed RSD data.
+    let mut validate_types: Vec<&String> = validate_rsd_raw.keys().collect();
+    validate_types.sort();
+
+    let mut header = vec!["label".to_string(), "QC_none".to_string(), "QC_SERRF".to_string()];
+    for t in &validate_types {
+        header.push(format!("{t}_none"));
+        header.push(format!("{t}_SERRF"));
+    }
+    writer.write_record(&header)?;
+
     for (i, label) in labels.iter().enumerate() {
-        writer.write_record([label.clone(), raw[i].to_string(), serrf[i].to_string()])?;
+        let mut row = vec![label.clone(), raw[i].to_string(), serrf[i].to_string()];
+        for t in &validate_types {
+            row.push(validate_rsd_raw[*t][i].to_string());
+            row.push(validate_rsd_serrf[*t][i].to_string());
+        }
+        writer.write_record(&row)?;
     }
     writer.flush()?;
     Ok(())
@@ -107,16 +144,20 @@ mod tests {
     }
 
     #[test]
-    fn write_matrix_csv_writes_a_header_and_one_row_per_label() {
+    fn write_matrix_csv_writes_a_header_using_the_real_sample_labels() {
+        // I5: the header must use the pipeline's real sample labels (`output.sample_order`),
+        // not generic `sample0`/`sample1` placeholders, so the CSV can be joined back to sample
+        // metadata (batch/time/type).
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("matrix.csv");
         let matrix = array![[1.5, 2.5], [3.5, 4.5]];
-        let labels = vec!["c1".to_string(), "c2".to_string()];
-        write_matrix_csv(&path, &labels, &matrix).unwrap();
+        let sample_labels = vec!["QC001".to_string(), "GB00042".to_string()];
+        let compound_labels = vec!["c1".to_string(), "c2".to_string()];
+        write_matrix_csv(&path, &sample_labels, &compound_labels, &matrix).unwrap();
 
         let content = std::fs::read_to_string(&path).unwrap();
         let mut lines = content.lines();
-        assert_eq!(lines.next().unwrap(), "label,sample0,sample1");
+        assert_eq!(lines.next().unwrap(), "label,QC001,GB00042");
         assert_eq!(lines.next().unwrap(), "c1,1.5,2.5");
         assert_eq!(lines.next().unwrap(), "c2,3.5,4.5");
         assert!(lines.next().is_none());
@@ -127,13 +168,34 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rsds.csv");
         let labels = vec!["c1".to_string(), "c2".to_string()];
-        write_rsd_csv(&path, &labels, &[0.1, 0.2], &[0.01, 0.02]).unwrap();
+        write_rsd_csv(&path, &labels, &[0.1, 0.2], &[0.01, 0.02], &HashMap::new(), &HashMap::new()).unwrap();
 
         let content = std::fs::read_to_string(&path).unwrap();
         let mut lines = content.lines();
         assert_eq!(lines.next().unwrap(), "label,QC_none,QC_SERRF");
         assert_eq!(lines.next().unwrap(), "c1,0.1,0.01");
         assert_eq!(lines.next().unwrap(), "c2,0.2,0.02");
+        assert!(lines.next().is_none());
+    }
+
+    #[test]
+    fn write_rsd_csv_adds_validate_columns_when_present() {
+        // I5: R's reference qc-rsds.csv has `validate_none`/`validate_SERRF` columns; the CLI
+        // now writes them too when the pipeline produced validate-type RSDs.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rsds.csv");
+        let labels = vec!["c1".to_string(), "c2".to_string()];
+        let mut validate_raw = HashMap::new();
+        validate_raw.insert("validate".to_string(), vec![0.3, 0.4]);
+        let mut validate_serrf = HashMap::new();
+        validate_serrf.insert("validate".to_string(), vec![0.03, 0.04]);
+        write_rsd_csv(&path, &labels, &[0.1, 0.2], &[0.01, 0.02], &validate_raw, &validate_serrf).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let mut lines = content.lines();
+        assert_eq!(lines.next().unwrap(), "label,QC_none,QC_SERRF,validate_none,validate_SERRF");
+        assert_eq!(lines.next().unwrap(), "c1,0.1,0.01,0.3,0.03");
+        assert_eq!(lines.next().unwrap(), "c2,0.2,0.02,0.4,0.04");
         assert!(lines.next().is_none());
     }
 }
