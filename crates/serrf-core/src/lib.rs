@@ -7,6 +7,7 @@ pub mod parse;
 pub mod pca;
 pub mod pipeline;
 pub mod preprocess;
+pub mod report;
 pub mod rsd;
 pub mod serrf;
 pub mod validate;
