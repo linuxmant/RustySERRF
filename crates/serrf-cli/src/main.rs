@@ -70,3 +70,70 @@ fn write_rsd_csv(path: &std::path::Path, labels: &[String], raw: &[f64], serrf: 
     writer.flush()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::array;
+
+    #[test]
+    fn std_dev_matches_the_hand_computed_sample_standard_deviation() {
+        // mean = 2.0; sample variance = ((1-2)^2 + (2-2)^2 + (3-2)^2) / (3-1) = 1.0
+        let result = std_dev(&[1.0, 2.0, 3.0]);
+        assert!((result - 1.0).abs() < 1e-12, "expected 1.0, got {result}");
+    }
+
+    #[test]
+    fn std_dev_of_a_constant_series_is_zero() {
+        assert_eq!(std_dev(&[5.0, 5.0, 5.0, 5.0]), 0.0);
+    }
+
+    #[test]
+    fn filter_rows_with_variance_drops_rows_with_zero_sd() {
+        let matrix = array![[1.0, 2.0], [3.0, 3.0], [4.0, 6.0]];
+        let sds = [1.0, 0.0, 2.5];
+        let filtered = filter_rows_with_variance(&matrix, &sds);
+        assert_eq!(filtered.shape(), &[2, 2]);
+        assert_eq!(filtered.row(0).to_vec(), vec![1.0, 2.0]);
+        assert_eq!(filtered.row(1).to_vec(), vec![4.0, 6.0]);
+    }
+
+    #[test]
+    fn filter_rows_with_variance_keeps_everything_when_all_sds_are_positive() {
+        let matrix = array![[1.0, 2.0], [3.0, 4.0]];
+        let sds = [0.5, 0.7];
+        let filtered = filter_rows_with_variance(&matrix, &sds);
+        assert_eq!(filtered.shape(), matrix.shape());
+    }
+
+    #[test]
+    fn write_matrix_csv_writes_a_header_and_one_row_per_label() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("matrix.csv");
+        let matrix = array![[1.5, 2.5], [3.5, 4.5]];
+        let labels = vec!["c1".to_string(), "c2".to_string()];
+        write_matrix_csv(&path, &labels, &matrix).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let mut lines = content.lines();
+        assert_eq!(lines.next().unwrap(), "label,sample0,sample1");
+        assert_eq!(lines.next().unwrap(), "c1,1.5,2.5");
+        assert_eq!(lines.next().unwrap(), "c2,3.5,4.5");
+        assert!(lines.next().is_none());
+    }
+
+    #[test]
+    fn write_rsd_csv_writes_a_header_and_one_row_per_label() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rsds.csv");
+        let labels = vec!["c1".to_string(), "c2".to_string()];
+        write_rsd_csv(&path, &labels, &[0.1, 0.2], &[0.01, 0.02]).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let mut lines = content.lines();
+        assert_eq!(lines.next().unwrap(), "label,QC_none,QC_SERRF");
+        assert_eq!(lines.next().unwrap(), "c1,0.1,0.01");
+        assert_eq!(lines.next().unwrap(), "c2,0.2,0.02");
+        assert!(lines.next().is_none());
+    }
+}
