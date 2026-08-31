@@ -1671,8 +1671,10 @@ Expected: clean, no warnings (matches the `rustfmt.toml`/CI setup from Plan 1).
 
 - [ ] **Step 3: Run coverage**
 
-Run: `cargo tarpaulin --workspace --exclude-files 'crates/serrf-cli/*' --ignore-tests -- --skip golden_e2e --skip golden_normalize`
+Run: `cargo tarpaulin --workspace --exclude serrf-cli --ignore-tests -- --skip serrf_output_is_statistically_equivalent_to_the_r_reference --skip the_full_job_lifecycle_completes_for_the_real_bundled_dataset`
 Expected: ≥80% combined line coverage for `serrf-api` (per Global Constraints). If short, identify the gap and add a targeted unit/integration test — do not lower the bar.
+
+(Two notes on this command, both found the hard way: (1) `--exclude-files 'crates/serrf-cli/*'` only excludes files from the coverage *report* — it does not stop `serrf-cli`'s own slow `cli` integration test from being *compiled and executed* under tarpaulin's instrumentation, which is much slower than a plain `cargo test` run and has no `--skip` applied to it. Use the package-level `--exclude serrf-cli` instead, which skips building/running that whole crate's tests. (2) `--skip` filters by *test function name*, not by test file/binary name — `--skip golden_normalize`/`--skip golden_e2e` match nothing, since the actual `#[test]` functions are named `serrf_output_is_statistically_equivalent_to_the_r_reference` and `the_full_job_lifecycle_completes_for_the_real_bundled_dataset` respectively. Passing the file names silently runs both slow tests anyway, and tarpaulin's own internal response timeout — separate from and much shorter than either test's actual runtime — fires first, producing a misleading "Timed out waiting for test response" error that looks like a hang rather than "your skip filter didn't match.")
 
 - [ ] **Step 4: Run the two slow tests once to confirm the whole system works end-to-end**
 
