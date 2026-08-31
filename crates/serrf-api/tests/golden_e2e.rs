@@ -36,6 +36,6 @@ async fn the_full_job_lifecycle_completes_for_the_real_bundled_dataset() {
     let download_response = client.get(format!("{base_url}/api/jobs/{job_id}/download")).send().await.unwrap();
     assert_eq!(download_response.status(), 200);
     let zip_bytes = download_response.bytes().await.unwrap();
-    let archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
     assert_eq!(archive.len(), 4);
 }

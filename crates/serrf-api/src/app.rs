@@ -11,6 +11,7 @@ pub fn build_app() -> axum::Router {
         .route("/api/jobs/:id/events", axum::routing::get(crate::routes::events::events))
         .route("/api/jobs/:id/result", axum::routing::get(crate::routes::result::result))
         .route("/api/jobs/:id/download", axum::routing::get(crate::routes::download::download))
+        .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
         .with_state(state)
 }
 
