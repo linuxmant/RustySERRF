@@ -57,6 +57,6 @@ pub async fn result(State(state): State<AppState>, Path(id): Path<String>) -> Re
     match lookup {
         JobStoreLookup::Ready(json) => Ok(Json(json)),
         JobStoreLookup::NotReady => Err(ApiError::NotReady),
-        JobStoreLookup::Failed(msg) => Err(ApiError::Internal(msg)),
+        JobStoreLookup::Failed(msg) => Err(ApiError::JobFailed(msg)),
     }
 }

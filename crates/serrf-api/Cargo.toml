@@ -14,14 +14,13 @@ path = "src/lib.rs"
 [dependencies]
 serrf-core = { path = "../serrf-core" }
 axum = { version = "0.7", features = ["multipart"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 tempfile = "3"
 async-stream = "0.3"
 zip = "0.6"
-thiserror = "1.0"
 futures-core = "0.3"
 
 [dev-dependencies]

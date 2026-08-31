@@ -60,6 +60,35 @@ async fn events_stream_ends_with_a_terminal_event() {
 }
 
 #[tokio::test]
+async fn connecting_after_completion_still_yields_a_terminal_event() {
+    // Regression test for C1: a client that only connects to /events *after* the job has
+    // already reached a terminal state must still observe that terminal event and have the
+    // stream close, rather than hanging forever on a stale `queued` value. Use a client-side
+    // timeout so a regression (the hang) fails fast instead of stalling CI.
+    let base_url = spawn_app().await;
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build().unwrap();
+    let job_id = upload_fixture(&base_url, &client).await;
+
+    // Poll /result until the job genuinely completes (200), *before* ever connecting to /events.
+    for _ in 0..100 {
+        let status = client.get(format!("{base_url}/api/jobs/{job_id}/result")).send().await.unwrap();
+        if status.status() != 425 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    let response = client.get(format!("{base_url}/api/jobs/{job_id}/events")).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    let body = response.text().await.unwrap();
+
+    assert!(
+        body.contains("event: completed") || body.contains("event: failed"),
+        "expected a terminal SSE event from a late-connecting client, got: {body}"
+    );
+}
+
+#[tokio::test]
 async fn events_for_an_unknown_job_returns_404() {
     let base_url = spawn_app().await;
     let client = reqwest::Client::new();

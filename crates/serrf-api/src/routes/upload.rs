@@ -40,7 +40,7 @@ pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> 
     let compound_labels = dataset.compounds.label.clone();
     let sample_type = samples.sample_type.clone();
 
-    tokio::task::spawn_blocking(move || {
+    let handle = tokio::task::spawn_blocking(move || {
         let progress_jobs = jobs.clone();
         let result = serrf_core::normalize(&dataset, &samples, &serrf_core::SerrfConfig::default(), move |p| {
             progress_jobs.push_progress(
@@ -62,6 +62,12 @@ pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> 
                 },
             ),
             Err(e) => jobs.fail(job_id, e.to_string()),
+        }
+    });
+    let supervising_jobs = state.jobs.clone();
+    tokio::spawn(async move {
+        if let Err(join_error) = handle.await {
+            supervising_jobs.fail(job_id, format!("job panicked: {join_error}"));
         }
     });
 

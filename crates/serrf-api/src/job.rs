@@ -92,20 +92,20 @@ impl JobStore {
 
     pub fn push_progress(&self, id: JobId, event: JobEvent) {
         if let Some(handle) = self.jobs.read().unwrap().get(&id) {
-            let _ = handle.events.send(event);
+            let _ = handle.events.send_replace(event);
         }
     }
 
     pub fn complete(&self, id: JobId, completed: CompletedJob) {
         if let Some(handle) = self.jobs.write().unwrap().get_mut(&id) {
             handle.result = JobResult::Done(Box::new(completed));
-            let _ = handle.events.send(JobEvent::Completed);
+            let _ = handle.events.send_replace(JobEvent::Completed);
         }
     }
 
     pub fn fail(&self, id: JobId, error: String) {
         if let Some(handle) = self.jobs.write().unwrap().get_mut(&id) {
-            let _ = handle.events.send(JobEvent::Failed { error: error.clone() });
+            let _ = handle.events.send_replace(JobEvent::Failed { error: error.clone() });
             handle.result = JobResult::Errored(error);
         }
     }

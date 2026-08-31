@@ -13,7 +13,7 @@ pub async fn download(State(state): State<AppState>, Path(id): Path<String>) -> 
     let zip_bytes = match lookup {
         JobStoreLookup::Ready(bytes) => bytes.map_err(ApiError::Internal)?,
         JobStoreLookup::NotReady => return Err(ApiError::NotReady),
-        JobStoreLookup::Failed(msg) => return Err(ApiError::Internal(msg)),
+        JobStoreLookup::Failed(msg) => return Err(ApiError::JobFailed(msg)),
     };
 
     Ok((
