@@ -80,7 +80,6 @@ async fn uploading_a_file_with_an_unsupported_extension_returns_400() {
 }
 
 #[tokio::test]
-#[ignore = "requires GET /api/jobs/:id/result from Task 6"]
 async fn a_completed_job_is_reachable_via_the_returned_job_id() {
     let base_url = spawn_app().await;
     let client = reqwest::Client::new();
@@ -100,4 +99,15 @@ async fn a_completed_job_is_reachable_via_the_returned_job_id() {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     panic!("job never completed within the polling window");
+}
+
+#[tokio::test]
+async fn result_for_an_unknown_job_returns_404() {
+    let base_url = spawn_app().await;
+    let client = reqwest::Client::new();
+    let fake_id = uuid::Uuid::new_v4();
+
+    let response = client.get(format!("{base_url}/api/jobs/{fake_id}/result")).send().await.unwrap();
+
+    assert_eq!(response.status(), 404);
 }
