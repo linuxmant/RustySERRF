@@ -4,7 +4,10 @@ use ndarray::{Array2, ArrayView2, Axis};
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
+use rayon::prelude::*;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 pub struct GroupInput<'a> {
     pub train: ArrayView2<'a, f64>,
@@ -19,7 +22,7 @@ pub struct GroupOutput {
     pub normed_target: Array2<f64>,
 }
 
-pub fn serrf_normalize_group(input: &GroupInput, seed: u64, mut progress: impl FnMut(usize, usize)) -> GroupOutput {
+pub fn serrf_normalize_group(input: &GroupInput, seed: u64, progress: impl FnMut(usize, usize) + Send) -> GroupOutput {
     let n_compounds = input.train.nrows();
     let n_train = input.train.ncols();
     let n_target = input.target.ncols();
@@ -81,129 +84,32 @@ pub fn serrf_normalize_group(input: &GroupInput, seed: u64, mut progress: impl F
         corr_target.insert(b.clone(), spearman_corr_matrix(&all.select(Axis(1), &target_cols)));
     }
 
+    // The per-compound loop below is embarrassingly parallel (each `j` only reads `all` and
+    // writes its own row), and the RF ensemble training inside it is by far the dominant cost of
+    // a full run (~5.4 minutes single-threaded on the real dataset). Drive it with rayon instead
+    // of a sequential `for`. `progress` is called from whichever thread finishes a compound, in
+    // completion order rather than compound order, so it's wrapped in a `Mutex` and reports a
+    // monotonically increasing "N of total done" count (via `completed`) instead of `j + 1` —
+    // `j` itself is no longer meaningful as a progress position once compounds can finish out of
+    // order.
+    let progress = Mutex::new(progress);
+    let completed = AtomicUsize::new(0);
+    let rows: Vec<Vec<f64>> = (0..n_compounds)
+        .into_par_iter()
+        .map(|j| {
+            let row = compute_compound_row(j, &all, &is_qc, &batches, &batch, &corr_train, &corr_target, input.num_vars, seed);
+            let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+            if let Ok(mut p) = progress.lock() {
+                p(done, n_compounds);
+            }
+            row
+        })
+        .collect();
+
     let mut normalized = Array2::<f64>::zeros((n_compounds, all.ncols()));
-
-    for j in 0..n_compounds {
-        progress(j + 1, n_compounds);
-        let mut row_normalized = vec![0.0; all.ncols()];
-
-        // whole-group (all batches) QC mean and target median for compound j, matching
-        // serrfR's `mean(all[j,sampleType.=='qc'])` (line 571) and
-        // `median(all[j,!sampleType.=='qc'])` (line 576) rescale denominators.
-        let all_qc_indices: Vec<usize> = (0..all.ncols()).filter(|&c| is_qc[c]).collect();
-        let all_target_indices: Vec<usize> = (0..all.ncols()).filter(|&c| !is_qc[c]).collect();
-        let overall_qc_mean = all_qc_indices.iter().map(|&c| all[[j, c]]).sum::<f64>() / all_qc_indices.len() as f64;
-        let overall_target_median = {
-            let mut vals: Vec<f64> = all_target_indices.iter().map(|&c| all[[j, c]]).collect();
-            median(&mut vals)
-        };
-
-        for b in &batches {
-            let batch_cols: Vec<usize> = (0..all.ncols()).filter(|&c| batch[c] == *b).collect();
-            let qc_cols: Vec<usize> = batch_cols.iter().copied().filter(|&c| is_qc[c]).collect();
-            let target_cols: Vec<usize> = batch_cols.iter().copied().filter(|&c| !is_qc[c]).collect();
-
-            let selected = select_variables(&corr_train[b], &corr_target[b], j, input.num_vars);
-            if selected.is_empty() {
-                for &c in &batch_cols {
-                    row_normalized[c] = all[[j, c]];
-                }
-            } else {
-                let train_y: Vec<f64> = qc_cols.iter().map(|&c| all[[j, c]]).collect();
-                let train_y_mean = train_y.iter().sum::<f64>() / train_y.len() as f64;
-                let centered_train_y: Vec<f64> = train_y.iter().map(|v| v - train_y_mean).collect();
-
-                let train_x: Vec<Vec<f64>> = qc_cols
-                    .iter()
-                    .map(|&c| selected.iter().map(|&i| all[[i, c]]).collect())
-                    .collect();
-                let test_x: Vec<Vec<f64>> = target_cols
-                    .iter()
-                    .map(|&c| selected.iter().map(|&i| all[[i, c]]).collect())
-                    .collect();
-
-                // per-(compound, batch) seed so RF randomness isn't perfectly correlated across
-                // every compound/batch in the run (I3): distinct but deterministic given the
-                // same (seed, compound_index, batch).
-                let forest_config = ForestConfig {
-                    num_trees: 500,
-                    mtry: default_mtry(selected.len()),
-                    min_node_size: 5,
-                    seed: derive_forest_seed(seed, j, b),
-                };
-                let forest = RandomForest::train(&train_x, &centered_train_y, &forest_config);
-
-                // ratio denominator is the OVERALL (whole-group) QC mean, not the batch-local one:
-                // serrfR line 571 divides by `mean(all[j,sampleType.=='qc'])`, which is computed
-                // across all batches. Using the batch-local mean here instead would make the ratio
-                // collapse to ~1 for every batch and silently defeat the batch-drift correction.
-                for (idx, &c) in qc_cols.iter().enumerate() {
-                    let predicted = forest.predict(&train_x[idx]) + train_y_mean;
-                    let ratio = predicted / overall_qc_mean;
-                    row_normalized[c] = if ratio.abs() < 1e-9 { all[[j, c]] } else { all[[j, c]] / ratio };
-                }
-
-                let target_values: Vec<f64> = target_cols.iter().map(|&c| all[[j, c]]).collect();
-                let target_mean = target_values.iter().sum::<f64>() / target_values.len().max(1) as f64;
-                let predictions: Vec<f64> = test_x.iter().map(|row| forest.predict(row)).collect();
-                let prediction_mean = if predictions.is_empty() { 0.0 } else { predictions.iter().sum::<f64>() / predictions.len() as f64 };
-                // ratio denominator is the OVERALL (whole-group) target median, matching serrfR
-                // line 576's `median(all[j,!sampleType.=='qc'])`, for the same reason as above.
-                for (idx, &c) in target_cols.iter().enumerate() {
-                    let predicted = predictions[idx] + target_mean - prediction_mean;
-                    let ratio = predicted / overall_target_median;
-                    row_normalized[c] = if ratio.abs() < 1e-9 { all[[j, c]] } else { all[[j, c]] / ratio };
-                }
-
-                // negative-value fix: fall back to the raw value (serrfR line 588/622)
-                for &c in &target_cols {
-                    if row_normalized[c] < 0.0 {
-                        row_normalized[c] = all[[j, c]];
-                    }
-                }
-            }
-
-            // fix non-finite values within this batch, mirroring app.R:600's
-            // `norm[!is.finite(norm)] = rnorm(..., sd = sd(norm[is.finite(norm)])*0.01)`.
-            // Runs regardless of which branch above populated `row_normalized` for this batch,
-            // so it also catches the zero/NaN entries the jitter-loop guard above deliberately
-            // left untouched. If every value in the batch is non-finite there is no spread to
-            // scale noise from, so fall back to the raw value instead (this port's "statistical
-            // equivalence, not exact match" philosophy rather than R's exact `rnorm` call).
-            let batch_finite: Vec<f64> = batch_cols.iter().map(|&c| row_normalized[c]).filter(|v| v.is_finite()).collect();
-            if batch_finite.len() < batch_cols.len() {
-                if batch_finite.is_empty() {
-                    // Falling back to the raw value is only safe when the raw value is itself
-                    // finite. A single non-finite raw cell can poison the whole batch's forest
-                    // (it trains on that batch's own y, so one Inf/NaN QC value can make every
-                    // prediction in the batch NaN) — in that case the raw fallback would just
-                    // reintroduce the original non-finite cell, so fall back to 0.0 instead for
-                    // any column whose raw value is also non-finite.
-                    for &c in &batch_cols {
-                        row_normalized[c] = if all[[j, c]].is_finite() { all[[j, c]] } else { 0.0 };
-                    }
-                } else {
-                    let noise_scale = sample_std_dev(&batch_finite) * 0.01;
-                    for &c in &batch_cols {
-                        if !row_normalized[c].is_finite() {
-                            row_normalized[c] = noise_scale * rng.gen_range(-1.0..1.0);
-                        }
-                    }
-                }
-            }
-        }
-
-        // final rescale of QC and non-QC groups to the original overall medians (serrfR lines 594-597)
-        rescale_to_median(&mut row_normalized, &all_qc_indices, &all.row(j).to_vec());
-        rescale_to_median(&mut row_normalized, &all_target_indices, &all.row(j).to_vec());
-
-        // post-hoc QC rescale ("c factor", serrfR lines 656-658), run after the median rescale
-        // above like in app.R. The boxplot.stats outlier swap (app.R lines 604-617) between
-        // those two steps is deliberately not ported (Task 12's brief excluded it by name).
-        apply_c_factor(&mut row_normalized, &all_qc_indices, &all_target_indices, &all.row(j).to_vec());
-
+    for (j, row) in rows.into_iter().enumerate() {
         for c in 0..all.ncols() {
-            normalized[[j, c]] = row_normalized[c];
+            normalized[[j, c]] = row[c];
         }
     }
 
@@ -211,6 +117,142 @@ pub fn serrf_normalize_group(input: &GroupInput, seed: u64, mut progress: impl F
         normed_train: normalized.slice(ndarray::s![.., 0..n_train]).to_owned(),
         normed_target: normalized.slice(ndarray::s![.., n_train..]).to_owned(),
     }
+}
+
+/// Computes one compound row's normalized values across every batch (the body of what was
+/// previously the sequential per-compound loop in `serrf_normalize_group`, extracted so it can
+/// run independently on a rayon worker thread per `j`). Owns its own RNG, seeded deterministically
+/// from `(seed, j)` via `derive_row_seed` rather than sharing the group-level RNG, since threads
+/// running concurrently can't share a single mutable `ChaCha8Rng` and still be deterministic.
+#[allow(clippy::too_many_arguments)]
+fn compute_compound_row(
+    j: usize,
+    all: &Array2<f64>,
+    is_qc: &[bool],
+    batches: &[String],
+    batch: &[String],
+    corr_train: &HashMap<String, Array2<f64>>,
+    corr_target: &HashMap<String, Array2<f64>>,
+    num_vars: usize,
+    seed: u64,
+) -> Vec<f64> {
+    let mut rng = ChaCha8Rng::seed_from_u64(derive_row_seed(seed, j));
+    let mut row_normalized = vec![0.0; all.ncols()];
+
+    // whole-group (all batches) QC mean and target median for compound j, matching
+    // serrfR's `mean(all[j,sampleType.=='qc'])` (line 571) and
+    // `median(all[j,!sampleType.=='qc'])` (line 576) rescale denominators.
+    let all_qc_indices: Vec<usize> = (0..all.ncols()).filter(|&c| is_qc[c]).collect();
+    let all_target_indices: Vec<usize> = (0..all.ncols()).filter(|&c| !is_qc[c]).collect();
+    let overall_qc_mean = all_qc_indices.iter().map(|&c| all[[j, c]]).sum::<f64>() / all_qc_indices.len() as f64;
+    let overall_target_median = {
+        let mut vals: Vec<f64> = all_target_indices.iter().map(|&c| all[[j, c]]).collect();
+        median(&mut vals)
+    };
+
+    for b in batches {
+        let batch_cols: Vec<usize> = (0..all.ncols()).filter(|&c| batch[c] == *b).collect();
+        let qc_cols: Vec<usize> = batch_cols.iter().copied().filter(|&c| is_qc[c]).collect();
+        let target_cols: Vec<usize> = batch_cols.iter().copied().filter(|&c| !is_qc[c]).collect();
+
+        let selected = select_variables(&corr_train[b], &corr_target[b], j, num_vars);
+        if selected.is_empty() {
+            for &c in &batch_cols {
+                row_normalized[c] = all[[j, c]];
+            }
+        } else {
+            let train_y: Vec<f64> = qc_cols.iter().map(|&c| all[[j, c]]).collect();
+            let train_y_mean = train_y.iter().sum::<f64>() / train_y.len() as f64;
+            let centered_train_y: Vec<f64> = train_y.iter().map(|v| v - train_y_mean).collect();
+
+            let train_x: Vec<Vec<f64>> = qc_cols.iter().map(|&c| selected.iter().map(|&i| all[[i, c]]).collect()).collect();
+            let test_x: Vec<Vec<f64>> = target_cols.iter().map(|&c| selected.iter().map(|&i| all[[i, c]]).collect()).collect();
+
+            // per-(compound, batch) seed so RF randomness isn't perfectly correlated across
+            // every compound/batch in the run (I3): distinct but deterministic given the
+            // same (seed, compound_index, batch).
+            let forest_config = ForestConfig {
+                num_trees: 500,
+                mtry: default_mtry(selected.len()),
+                min_node_size: 5,
+                seed: derive_forest_seed(seed, j, b),
+            };
+            let forest = RandomForest::train(&train_x, &centered_train_y, &forest_config);
+
+            // ratio denominator is the OVERALL (whole-group) QC mean, not the batch-local one:
+            // serrfR line 571 divides by `mean(all[j,sampleType.=='qc'])`, which is computed
+            // across all batches. Using the batch-local mean here instead would make the ratio
+            // collapse to ~1 for every batch and silently defeat the batch-drift correction.
+            for (idx, &c) in qc_cols.iter().enumerate() {
+                let predicted = forest.predict(&train_x[idx]) + train_y_mean;
+                let ratio = predicted / overall_qc_mean;
+                row_normalized[c] = if ratio.abs() < 1e-9 { all[[j, c]] } else { all[[j, c]] / ratio };
+            }
+
+            let target_values: Vec<f64> = target_cols.iter().map(|&c| all[[j, c]]).collect();
+            let target_mean = target_values.iter().sum::<f64>() / target_values.len().max(1) as f64;
+            let predictions: Vec<f64> = test_x.iter().map(|row| forest.predict(row)).collect();
+            let prediction_mean = if predictions.is_empty() {
+                0.0
+            } else {
+                predictions.iter().sum::<f64>() / predictions.len() as f64
+            };
+            // ratio denominator is the OVERALL (whole-group) target median, matching serrfR
+            // line 576's `median(all[j,!sampleType.=='qc'])`, for the same reason as above.
+            for (idx, &c) in target_cols.iter().enumerate() {
+                let predicted = predictions[idx] + target_mean - prediction_mean;
+                let ratio = predicted / overall_target_median;
+                row_normalized[c] = if ratio.abs() < 1e-9 { all[[j, c]] } else { all[[j, c]] / ratio };
+            }
+
+            // negative-value fix: fall back to the raw value (serrfR line 588/622)
+            for &c in &target_cols {
+                if row_normalized[c] < 0.0 {
+                    row_normalized[c] = all[[j, c]];
+                }
+            }
+        }
+
+        // fix non-finite values within this batch, mirroring app.R:600's
+        // `norm[!is.finite(norm)] = rnorm(..., sd = sd(norm[is.finite(norm)])*0.01)`.
+        // Runs regardless of which branch above populated `row_normalized` for this batch,
+        // so it also catches the zero/NaN entries the jitter-loop guard above deliberately
+        // left untouched. If every value in the batch is non-finite there is no spread to
+        // scale noise from, so fall back to the raw value instead (this port's "statistical
+        // equivalence, not exact match" philosophy rather than R's exact `rnorm` call).
+        let batch_finite: Vec<f64> = batch_cols.iter().map(|&c| row_normalized[c]).filter(|v| v.is_finite()).collect();
+        if batch_finite.len() < batch_cols.len() {
+            if batch_finite.is_empty() {
+                // Falling back to the raw value is only safe when the raw value is itself
+                // finite. A single non-finite raw cell can poison the whole batch's forest
+                // (it trains on that batch's own y, so one Inf/NaN QC value can make every
+                // prediction in the batch NaN) — in that case the raw fallback would just
+                // reintroduce the original non-finite cell, so fall back to 0.0 instead for
+                // any column whose raw value is also non-finite.
+                for &c in &batch_cols {
+                    row_normalized[c] = if all[[j, c]].is_finite() { all[[j, c]] } else { 0.0 };
+                }
+            } else {
+                let noise_scale = sample_std_dev(&batch_finite) * 0.01;
+                for &c in &batch_cols {
+                    if !row_normalized[c].is_finite() {
+                        row_normalized[c] = noise_scale * rng.gen_range(-1.0..1.0);
+                    }
+                }
+            }
+        }
+    }
+
+    // final rescale of QC and non-QC groups to the original overall medians (serrfR lines 594-597)
+    rescale_to_median(&mut row_normalized, &all_qc_indices, &all.row(j).to_vec());
+    rescale_to_median(&mut row_normalized, &all_target_indices, &all.row(j).to_vec());
+
+    // post-hoc QC rescale ("c factor", serrfR lines 656-658), run after the median rescale
+    // above like in app.R. The boxplot.stats outlier swap (app.R lines 604-617) between
+    // those two steps is deliberately not ported (Task 12's brief excluded it by name).
+    apply_c_factor(&mut row_normalized, &all_qc_indices, &all_target_indices, &all.row(j).to_vec());
+
+    row_normalized
 }
 
 fn rescale_to_median(row: &mut [f64], indices: &[usize], original: &[f64]) {
@@ -260,7 +302,11 @@ fn median(values: &mut [f64]) -> f64 {
     if n == 0 {
         return f64::NAN;
     }
-    if n % 2 == 0 { (values[n / 2 - 1] + values[n / 2]) / 2.0 } else { values[n / 2] }
+    if n.is_multiple_of(2) {
+        (values[n / 2 - 1] + values[n / 2]) / 2.0
+    } else {
+        values[n / 2]
+    }
 }
 
 /// Sample standard deviation (n-1 denominator), used only to scale the non-finite-value rescue
@@ -285,6 +331,20 @@ fn derive_forest_seed(seed: u64, compound_index: usize, batch: &str) -> u64 {
     seed.hash(&mut hasher);
     compound_index.hash(&mut hasher);
     batch.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Derives a per-compound RNG seed for `compute_compound_row`'s non-finite-value rescue noise.
+/// Each `j` runs on its own rayon worker thread and can't share the group-level RNG safely, so
+/// every row needs its own independent-but-deterministic RNG; a distinct `"row"` tag keeps this
+/// seed space from colliding with `derive_forest_seed`'s.
+fn derive_row_seed(seed: u64, compound_index: usize) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    seed.hash(&mut hasher);
+    "row".hash(&mut hasher);
+    compound_index.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -320,6 +380,29 @@ mod tests {
             }
         }
         (train, target, train_batch, target_batch)
+    }
+
+    #[test]
+    fn produces_identical_output_across_repeated_calls_with_the_same_seed() {
+        // Guards the rayon-parallelized per-compound loop: completion order across threads is
+        // nondeterministic, so output must not depend on it. Same input + same seed must always
+        // produce bit-identical output, run repeatedly to make a scheduling-order dependency
+        // more likely to surface instead of passing by luck on a single run.
+        let (train, target, train_batch, target_batch) = synthetic_group();
+        let input = GroupInput {
+            train: train.view(),
+            target: target.view(),
+            train_batch: &train_batch,
+            target_batch: &target_batch,
+            num_vars: 3,
+        };
+
+        let baseline = serrf_normalize_group(&input, 7, |_, _| {});
+        for _ in 0..5 {
+            let repeat = serrf_normalize_group(&input, 7, |_, _| {});
+            assert_eq!(repeat.normed_train, baseline.normed_train);
+            assert_eq!(repeat.normed_target, baseline.normed_target);
+        }
     }
 
     #[test]
@@ -361,12 +444,21 @@ mod tests {
                 target[[0, j]] = 0.0;
             }
         }
-        let input = GroupInput { train: train.view(), target: target.view(), train_batch: &train_batch, target_batch: &target_batch, num_vars: 3 };
+        let input = GroupInput {
+            train: train.view(),
+            target: target.view(),
+            train_batch: &train_batch,
+            target_batch: &target_batch,
+            num_vars: 3,
+        };
         let output = serrf_normalize_group(&input, 1, |_, _| {});
 
         assert_eq!(output.normed_train.shape(), train.shape());
         assert_eq!(output.normed_target.shape(), target.shape());
-        assert!(output.normed_train.iter().all(|v| v.is_finite()), "expected a finite output for an all-zero-in-one-batch compound");
+        assert!(
+            output.normed_train.iter().all(|v| v.is_finite()),
+            "expected a finite output for an all-zero-in-one-batch compound"
+        );
         assert!(output.normed_target.iter().all(|v| v.is_finite()));
     }
 
@@ -374,12 +466,21 @@ mod tests {
     fn does_not_panic_with_a_single_infinite_cell_anywhere() {
         let (mut train, target, train_batch, target_batch) = synthetic_group();
         train[[0, 0]] = f64::INFINITY;
-        let input = GroupInput { train: train.view(), target: target.view(), train_batch: &train_batch, target_batch: &target_batch, num_vars: 3 };
+        let input = GroupInput {
+            train: train.view(),
+            target: target.view(),
+            train_batch: &train_batch,
+            target_batch: &target_batch,
+            num_vars: 3,
+        };
         let output = serrf_normalize_group(&input, 1, |_, _| {});
 
         assert_eq!(output.normed_train.shape(), train.shape());
         assert_eq!(output.normed_target.shape(), target.shape());
-        assert!(output.normed_train.iter().all(|v| v.is_finite()), "expected a single stray Inf cell to be rescued to a finite value");
+        assert!(
+            output.normed_train.iter().all(|v| v.is_finite()),
+            "expected a single stray Inf cell to be rescued to a finite value"
+        );
         assert!(output.normed_target.iter().all(|v| v.is_finite()));
     }
 
@@ -392,7 +493,13 @@ mod tests {
         for j in 0..target.ncols() {
             target[[0, j]] = f64::INFINITY;
         }
-        let input = GroupInput { train: train.view(), target: target.view(), train_batch: &train_batch, target_batch: &target_batch, num_vars: 3 };
+        let input = GroupInput {
+            train: train.view(),
+            target: target.view(),
+            train_batch: &train_batch,
+            target_batch: &target_batch,
+            num_vars: 3,
+        };
         let output = serrf_normalize_group(&input, 1, |_, _| {});
 
         // No pipeline-level `extract_infinite_rows` strip happens at this layer (that lives in
@@ -414,7 +521,13 @@ mod tests {
         for j in 0..target.ncols() {
             target[[0, j]] = f64::NAN;
         }
-        let input = GroupInput { train: train.view(), target: target.view(), train_batch: &train_batch, target_batch: &target_batch, num_vars: 3 };
+        let input = GroupInput {
+            train: train.view(),
+            target: target.view(),
+            train_batch: &train_batch,
+            target_batch: &target_batch,
+            num_vars: 3,
+        };
         let output = serrf_normalize_group(&input, 1, |_, _| {});
 
         // Same caveat as above about no pipeline-level strip happening at this layer; the
@@ -445,7 +558,12 @@ mod tests {
         // c = (200 + (-175/100)*50) / 25 = 4.5
         let expected_qc: [f64; 4] = [45.0, 90.0, 135.0, 180.0];
         for (i, &idx) in qc_indices.iter().enumerate() {
-            assert!((row[idx] - expected_qc[i]).abs() < 1e-9, "qc[{idx}] = {}, expected {}", row[idx], expected_qc[i]);
+            assert!(
+                (row[idx] - expected_qc[i]).abs() < 1e-9,
+                "qc[{idx}] = {}, expected {}",
+                row[idx],
+                expected_qc[i]
+            );
         }
         // target values are untouched by the c factor
         assert_eq!(row[4], 150.0);
@@ -492,7 +610,13 @@ mod tests {
         let target = ndarray::arr2(&[[100.0, 200.0, 300.0]]);
         let train_batch = vec!["A".to_string(); 4];
         let target_batch = vec!["A".to_string(); 3];
-        let input = GroupInput { train: train.view(), target: target.view(), train_batch: &train_batch, target_batch: &target_batch, num_vars: 0 };
+        let input = GroupInput {
+            train: train.view(),
+            target: target.view(),
+            train_batch: &train_batch,
+            target_batch: &target_batch,
+            num_vars: 0,
+        };
 
         let output = serrf_normalize_group(&input, 1, |_, _| {});
 
@@ -507,7 +631,13 @@ mod tests {
         let (mut train, target, train_batch, target_batch) = synthetic_group();
         train[[0, 0]] = 0.0;
         train[[0, 7]] = 0.0;
-        let input = GroupInput { train: train.view(), target: target.view(), train_batch: &train_batch, target_batch: &target_batch, num_vars: 3 };
+        let input = GroupInput {
+            train: train.view(),
+            target: target.view(),
+            train_batch: &train_batch,
+            target_batch: &target_batch,
+            num_vars: 3,
+        };
         let output = serrf_normalize_group(&input, 1, |_, _| {});
 
         assert_eq!(output.normed_train.shape(), train.shape());

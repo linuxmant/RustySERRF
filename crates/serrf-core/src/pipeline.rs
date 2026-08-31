@@ -16,7 +16,11 @@ pub struct SerrfConfig {
 
 impl Default for SerrfConfig {
     fn default() -> Self {
-        Self { num_vars: 10, seed: 1, cv_folds: 5 }
+        Self {
+            num_vars: 10,
+            seed: 1,
+            cv_folds: 5,
+        }
     }
 }
 
@@ -40,7 +44,7 @@ pub fn normalize(
     dataset: &Dataset,
     samples: &ValidatedSamples,
     config: &SerrfConfig,
-    mut progress: impl FnMut(Progress),
+    mut progress: impl FnMut(Progress) + Send,
 ) -> Result<PipelineOutput, SerrfError> {
     let mut values = dataset.values.clone();
     impute_missing(&mut values);
@@ -74,23 +78,48 @@ pub fn normalize(
     validate_types.sort();
     validate_types.dedup();
 
-    progress(Progress { stage: "raw RSD".into(), current: 0, total: 1 });
-    let qc_rsd_raw_finite: Vec<f64> =
-        (0..working.nrows()).map(|i| rsd(&qc_cols.iter().map(|&c| working[[i, c]]).collect::<Vec<_>>())).collect();
+    progress(Progress {
+        stage: "raw RSD".into(),
+        current: 0,
+        total: 1,
+    });
+    let qc_rsd_raw_finite: Vec<f64> = (0..working.nrows())
+        .map(|i| rsd(&qc_cols.iter().map(|&c| working[[i, c]]).collect::<Vec<_>>()))
+        .collect();
 
     let qc_matrix = working.select(Axis(1), &qc_cols);
     let sample_matrix = working.select(Axis(1), &sample_cols);
     let qc_batch: Vec<String> = qc_cols.iter().map(|&c| samples.batch[c].clone()).collect();
     let sample_batch: Vec<String> = sample_cols.iter().map(|&c| samples.batch[c].clone()).collect();
 
-    progress(Progress { stage: "SERRF normalization".into(), current: 0, total: working.nrows() });
+    progress(Progress {
+        stage: "SERRF normalization".into(),
+        current: 0,
+        total: working.nrows(),
+    });
     let group_output = serrf_normalize_group(
-        &GroupInput { train: qc_matrix.view(), target: sample_matrix.view(), train_batch: &qc_batch, target_batch: &sample_batch, num_vars: config.num_vars },
+        &GroupInput {
+            train: qc_matrix.view(),
+            target: sample_matrix.view(),
+            train_batch: &qc_batch,
+            target_batch: &sample_batch,
+            num_vars: config.num_vars,
+        },
         config.seed,
-        |current, total| progress(Progress { stage: "SERRF normalization".into(), current, total }),
+        |current, total| {
+            progress(Progress {
+                stage: "SERRF normalization".into(),
+                current,
+                total,
+            })
+        },
     );
 
-    progress(Progress { stage: "cross-validation".into(), current: 0, total: 1 });
+    progress(Progress {
+        stage: "cross-validation".into(),
+        current: 0,
+        total: 1,
+    });
     let qc_rsd_serrf_finite = cross_validate_qc(&qc_matrix, &qc_batch, config.cv_folds, config.seed, config.num_vars);
 
     let mut validate_rsd_raw_finite = HashMap::new();
@@ -108,12 +137,22 @@ pub fn normalize(
     }
 
     for validate_type in &validate_types {
-        let validate_cols: Vec<usize> = (0..working.ncols()).filter(|&c| samples.sample_type[c].as_deref() == Some(validate_type.as_str())).collect();
+        let validate_cols: Vec<usize> = (0..working.ncols())
+            .filter(|&c| samples.sample_type[c].as_deref() == Some(validate_type.as_str()))
+            .collect();
         let validate_matrix = working.select(Axis(1), &validate_cols);
         let validate_batch: Vec<String> = validate_cols.iter().map(|&c| samples.batch[c].clone()).collect();
-        let raw_rsd: Vec<f64> = (0..working.nrows()).map(|i| rsd(&validate_cols.iter().map(|&c| working[[i, c]]).collect::<Vec<_>>())).collect();
+        let raw_rsd: Vec<f64> = (0..working.nrows())
+            .map(|i| rsd(&validate_cols.iter().map(|&c| working[[i, c]]).collect::<Vec<_>>()))
+            .collect();
         let group = serrf_normalize_group(
-            &GroupInput { train: qc_matrix.view(), target: validate_matrix.view(), train_batch: &qc_batch, target_batch: &validate_batch, num_vars: config.num_vars },
+            &GroupInput {
+                train: qc_matrix.view(),
+                target: validate_matrix.view(),
+                train_batch: &qc_batch,
+                target_batch: &validate_batch,
+                num_vars: config.num_vars,
+            },
             config.seed,
             |_, _| {},
         );
@@ -162,7 +201,15 @@ pub fn normalize(
     let validate_rsd_raw: HashMap<String, Vec<f64>> = validate_rsd_raw_finite.into_iter().map(|(k, v)| (k, reinsert(&v))).collect();
     let validate_rsd_serrf: HashMap<String, Vec<f64>> = validate_rsd_serrf_finite.into_iter().map(|(k, v)| (k, reinsert(&v))).collect();
 
-    Ok(PipelineOutput { raw, serrf, qc_rsd_raw, qc_rsd_serrf, validate_rsd_raw, validate_rsd_serrf, sample_order: samples.label.clone() })
+    Ok(PipelineOutput {
+        raw,
+        serrf,
+        qc_rsd_raw,
+        qc_rsd_serrf,
+        validate_rsd_raw,
+        validate_rsd_serrf,
+        sample_order: samples.label.clone(),
+    })
 }
 
 #[cfg(test)]
@@ -194,18 +241,33 @@ mod tests {
             }
         }
         let dataset = Dataset {
-            samples: RawSampleTable { label: (0..n).map(|i| format!("s{i}")).collect(), columns: HashMap::new() },
-            compounds: RawCompoundTable { label: (0..n_compounds).map(|i| format!("c{i}")).collect(), columns: HashMap::new() },
+            samples: RawSampleTable {
+                label: (0..n).map(|i| format!("s{i}")).collect(),
+                columns: HashMap::new(),
+            },
+            compounds: RawCompoundTable {
+                label: (0..n_compounds).map(|i| format!("c{i}")).collect(),
+                columns: HashMap::new(),
+            },
             values,
         };
-        let samples = ValidatedSamples { label: dataset.samples.label.clone(), batch, sample_type, time };
+        let samples = ValidatedSamples {
+            label: dataset.samples.label.clone(),
+            batch,
+            sample_type,
+            time,
+        };
         (dataset, samples)
     }
 
     #[test]
     fn produces_correctly_shaped_output_and_improves_qc_rsd() {
         let (dataset, samples) = synthetic_dataset();
-        let config = SerrfConfig { num_vars: 3, seed: 1, cv_folds: 3 };
+        let config = SerrfConfig {
+            num_vars: 3,
+            seed: 1,
+            cv_folds: 3,
+        };
         let output = normalize(&dataset, &samples, &config, |_| {}).unwrap();
 
         assert_eq!(output.raw.shape(), dataset.values.shape());
@@ -232,7 +294,11 @@ mod tests {
         for c in 0..dataset.values.ncols() {
             dataset.values[[infinite_row, c]] = f64::INFINITY;
         }
-        let config = SerrfConfig { num_vars: 3, seed: 1, cv_folds: 3 };
+        let config = SerrfConfig {
+            num_vars: 3,
+            seed: 1,
+            cv_folds: 3,
+        };
         let output = normalize(&dataset, &samples, &config, |_| {}).unwrap();
 
         let n_compounds = dataset.values.nrows();
@@ -242,8 +308,14 @@ mod tests {
         assert_eq!(output.qc_rsd_serrf.len(), n_compounds);
 
         // The stripped row comes back as NaN everywhere it's reported...
-        assert!(output.raw.row(infinite_row).iter().all(|v| v.is_nan()), "expected the stripped row to be reinserted as NaN in `raw`");
-        assert!(output.serrf.row(infinite_row).iter().all(|v| v.is_nan()), "expected the stripped row to be reinserted as NaN in `serrf`");
+        assert!(
+            output.raw.row(infinite_row).iter().all(|v| v.is_nan()),
+            "expected the stripped row to be reinserted as NaN in `raw`"
+        );
+        assert!(
+            output.serrf.row(infinite_row).iter().all(|v| v.is_nan()),
+            "expected the stripped row to be reinserted as NaN in `serrf`"
+        );
         assert!(output.qc_rsd_raw[infinite_row].is_nan());
         assert!(output.qc_rsd_serrf[infinite_row].is_nan());
 
@@ -252,7 +324,10 @@ mod tests {
             if i == infinite_row {
                 continue;
             }
-            assert!(output.raw.row(i).iter().all(|v| v.is_finite()), "row {i} should be untouched by the stripped row");
+            assert!(
+                output.raw.row(i).iter().all(|v| v.is_finite()),
+                "row {i} should be untouched by the stripped row"
+            );
             assert!(output.serrf.row(i).iter().all(|v| v.is_finite()), "row {i} should normalize normally");
             assert!(output.qc_rsd_raw[i].is_finite());
             assert!(output.qc_rsd_serrf[i].is_finite());
@@ -295,25 +370,46 @@ mod tests {
             }
         }
         let dataset = Dataset {
-            samples: RawSampleTable { label: (0..n).map(|i| format!("s{i}")).collect(), columns: HashMap::new() },
-            compounds: RawCompoundTable { label: (0..n_compounds).map(|i| format!("c{i}")).collect(), columns: HashMap::new() },
+            samples: RawSampleTable {
+                label: (0..n).map(|i| format!("s{i}")).collect(),
+                columns: HashMap::new(),
+            },
+            compounds: RawCompoundTable {
+                label: (0..n_compounds).map(|i| format!("c{i}")).collect(),
+                columns: HashMap::new(),
+            },
             values,
         };
-        let samples = ValidatedSamples { label: dataset.samples.label.clone(), batch, sample_type, time };
+        let samples = ValidatedSamples {
+            label: dataset.samples.label.clone(),
+            batch,
+            sample_type,
+            time,
+        };
         (dataset, samples)
     }
 
     #[test]
     fn produces_validate_type_rsd_entries_and_passes_through_blank_columns() {
         let (dataset, samples) = synthetic_dataset_with_validate_and_blank();
-        let config = SerrfConfig { num_vars: 3, seed: 1, cv_folds: 3 };
+        let config = SerrfConfig {
+            num_vars: 3,
+            seed: 1,
+            cv_folds: 3,
+        };
         let output = normalize(&dataset, &samples, &config, |_| {}).unwrap();
 
         let n_compounds = dataset.values.nrows();
 
         // The "validate" sample-type group must produce raw/serrf RSD entries, one per compound.
-        assert!(output.validate_rsd_raw.contains_key("validate"), "expected a 'validate' entry in validate_rsd_raw");
-        assert!(output.validate_rsd_serrf.contains_key("validate"), "expected a 'validate' entry in validate_rsd_serrf");
+        assert!(
+            output.validate_rsd_raw.contains_key("validate"),
+            "expected a 'validate' entry in validate_rsd_raw"
+        );
+        assert!(
+            output.validate_rsd_serrf.contains_key("validate"),
+            "expected a 'validate' entry in validate_rsd_serrf"
+        );
         assert_eq!(output.validate_rsd_raw["validate"].len(), n_compounds);
         assert_eq!(output.validate_rsd_serrf["validate"].len(), n_compounds);
 
@@ -322,7 +418,11 @@ mod tests {
         assert_eq!(blank_cols.len(), 2, "expected exactly the 2 blank columns from the fixture");
         for &c in &blank_cols {
             for i in 0..n_compounds {
-                assert_eq!(output.serrf[[i, c]], output.raw[[i, c]], "blank column {c} row {i} should pass through unnormalized");
+                assert_eq!(
+                    output.serrf[[i, c]],
+                    output.raw[[i, c]],
+                    "blank column {c} row {i} should pass through unnormalized"
+                );
             }
         }
     }

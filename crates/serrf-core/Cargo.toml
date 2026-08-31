@@ -12,6 +12,7 @@ rand_chacha = "0.3"
 nalgebra = "0.32"
 plotters = "0.3"
 thiserror = "1.0"
+rayon = "1.10"
 
 [dev-dependencies]
 tempfile = "3"
