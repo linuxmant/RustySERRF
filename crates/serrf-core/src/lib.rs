@@ -2,6 +2,7 @@ pub mod correlation;
 pub mod cv;
 pub mod dataset;
 pub mod error;
+pub mod export;
 pub mod forest;
 pub mod parse;
 pub mod pca;
