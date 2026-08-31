@@ -387,6 +387,7 @@ git commit -m "Scaffold serrf-api crate with a health endpoint"
 **Files:**
 - Create: `crates/serrf-api/src/job.rs`
 - Modify: `crates/serrf-api/src/lib.rs` (add `pub mod job;`)
+- Modify: `crates/serrf-api/Cargo.toml` (add `ndarray` as a dev-dependency — the unit test below constructs a `serrf_core::PipelineOutput` by hand via `ndarray::Array2::zeros(...)`, and `ndarray` is currently only a dependency of `serrf-core`, not `serrf-api`, so naming it directly won't compile without this)
 
 **Interfaces:**
 - Produces:
@@ -403,7 +404,15 @@ git commit -m "Scaffold serrf-api crate with a health endpoint"
     - `fn with_completed<R>(&self, id: JobId, f: impl FnOnce(&CompletedJob) -> R) -> Option<JobStoreLookup<R>>` where `JobStoreLookup<R>` is an enum `{ NotReady, Failed(String), Ready(R) }` and the outer `Option` is `None` for an unknown job id — lets callers build a response from the completed job data without cloning `PipelineOutput` or holding the lock across an `.await`.
 - Consumes: `serrf_core::PipelineOutput` (Task 4 onward populate `CompletedJob`).
 
-- [ ] **Step 1: Write the failing unit tests**
+- [ ] **Step 1: Add `ndarray` as a dev-dependency in `crates/serrf-api/Cargo.toml`**
+
+Add to the `[dev-dependencies]` section (alongside `reqwest`):
+
+```toml
+ndarray = "0.15"
+```
+
+- [ ] **Step 2: Write the failing unit tests**
 
 Append to `crates/serrf-api/src/job.rs` (create the file with just this test module first):
 
@@ -504,19 +513,19 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 3: Run tests to verify they fail**
 
 Run: `cargo test -p serrf-api --lib job::`
 Expected: FAIL to compile — none of `JobId`, `JobEvent`, `CompletedJob`, `JobStore`, `JobStoreLookup` exist yet.
 
-- [ ] **Step 3: Add `pub mod job;` to `crates/serrf-api/src/lib.rs`**
+- [ ] **Step 4: Add `pub mod job;` to `crates/serrf-api/src/lib.rs`**
 
 ```rust
 pub mod app;
 pub mod job;
 ```
 
-- [ ] **Step 4: Implement `crates/serrf-api/src/job.rs` above the test module**
+- [ ] **Step 5: Implement `crates/serrf-api/src/job.rs` above the test module**
 
 ```rust
 use std::collections::HashMap;
@@ -639,15 +648,15 @@ impl Default for JobStore {
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 6: Run tests to verify they pass**
 
 Run: `cargo test -p serrf-api --lib job::`
 Expected: PASS, 8 tests.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add crates/serrf-api/src/job.rs crates/serrf-api/src/lib.rs
+git add crates/serrf-api/src/job.rs crates/serrf-api/src/lib.rs crates/serrf-api/Cargo.toml
 git commit -m "Add JobId/JobEvent/JobStore — pure in-memory job tracking"
 ```
 
@@ -1075,8 +1084,17 @@ Add `futures-core = "0.3"` to `crates/serrf-api/Cargo.toml`'s `[dependencies]` (
 
 - [ ] **Step 4: Wire the route into `crates/serrf-api/src/app.rs`**
 
+Replace the `build_app` function with (adds one `.route(...)` chain call to Task 4's version, everything else unchanged):
+
 ```rust
-.route("/api/jobs/:id/events", axum::routing::get(crate::routes::events::events))
+pub fn build_app() -> axum::Router {
+    let state = AppState { jobs: crate::job::JobStore::new() };
+    axum::Router::new()
+        .route("/health", axum::routing::get(health))
+        .route("/api/jobs", axum::routing::post(crate::routes::upload::upload))
+        .route("/api/jobs/:id/events", axum::routing::get(crate::routes::events::events))
+        .with_state(state)
+}
 ```
 
 - [ ] **Step 5: Add `pub mod events;` to `crates/serrf-api/src/routes/mod.rs`**
@@ -1218,8 +1236,18 @@ ApiError::NotReady => (StatusCode::TOO_EARLY, "job is still running".to_string()
 
 - [ ] **Step 6: Wire the route into `crates/serrf-api/src/app.rs`**
 
+Replace the `build_app` function with (adds one `.route(...)` chain call to Task 5's version, everything else unchanged):
+
 ```rust
-.route("/api/jobs/:id/result", axum::routing::get(crate::routes::result::result))
+pub fn build_app() -> axum::Router {
+    let state = AppState { jobs: crate::job::JobStore::new() };
+    axum::Router::new()
+        .route("/health", axum::routing::get(health))
+        .route("/api/jobs", axum::routing::post(crate::routes::upload::upload))
+        .route("/api/jobs/:id/events", axum::routing::get(crate::routes::events::events))
+        .route("/api/jobs/:id/result", axum::routing::get(crate::routes::result::result))
+        .with_state(state)
+}
 ```
 
 - [ ] **Step 7: Add `pub mod result;` to `crates/serrf-api/src/routes/mod.rs`**
@@ -1425,8 +1453,19 @@ fn build_zip(completed: &crate::job::CompletedJob) -> Result<Vec<u8>, String> {
 
 - [ ] **Step 4: Wire the route into `crates/serrf-api/src/app.rs`**
 
+Replace the `build_app` function with (adds one `.route(...)` chain call to Task 6's version, everything else unchanged):
+
 ```rust
-.route("/api/jobs/:id/download", axum::routing::get(crate::routes::download::download))
+pub fn build_app() -> axum::Router {
+    let state = AppState { jobs: crate::job::JobStore::new() };
+    axum::Router::new()
+        .route("/health", axum::routing::get(health))
+        .route("/api/jobs", axum::routing::post(crate::routes::upload::upload))
+        .route("/api/jobs/:id/events", axum::routing::get(crate::routes::events::events))
+        .route("/api/jobs/:id/result", axum::routing::get(crate::routes::result::result))
+        .route("/api/jobs/:id/download", axum::routing::get(crate::routes::download::download))
+        .with_state(state)
+}
 ```
 
 - [ ] **Step 5: Add `pub mod download;` to `crates/serrf-api/src/routes/mod.rs`**
