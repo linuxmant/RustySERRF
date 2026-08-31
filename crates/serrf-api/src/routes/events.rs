@@ -1,0 +1,39 @@
+use crate::app::AppState;
+use crate::error::ApiError;
+use crate::job::{JobEvent, JobId};
+use axum::extract::{Path, State};
+use axum::response::sse::{Event, Sse};
+use futures_core::Stream;
+
+pub async fn events(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
+    let job_id = JobId::parse(&id).map_err(|_| ApiError::BadRequest("invalid job id".to_string()))?;
+    let mut rx = state.jobs.subscribe(job_id).ok_or(ApiError::NotFound)?;
+
+    let stream = async_stream::stream! {
+        loop {
+            let event = rx.borrow_and_update().clone();
+            yield Ok(to_sse_event(&event));
+            if event.is_terminal() {
+                break;
+            }
+            if rx.changed().await.is_err() {
+                break;
+            }
+        }
+    };
+
+    Ok(Sse::new(stream))
+}
+
+fn to_sse_event(event: &JobEvent) -> Event {
+    let name = match event {
+        JobEvent::Queued => "queued",
+        JobEvent::Progress { .. } => "progress",
+        JobEvent::Completed => "completed",
+        JobEvent::Failed { .. } => "failed",
+    };
+    Event::default().event(name).json_data(event).unwrap()
+}

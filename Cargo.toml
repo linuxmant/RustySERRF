@@ -1,3 +1,3 @@
 [workspace]
 resolver = "2"
-members = ["crates/serrf-core", "crates/serrf-cli"]
+members = ["crates/serrf-core", "crates/serrf-cli", "crates/serrf-api"]

@@ -42,10 +42,14 @@ fn main() -> anyhow::Result<()> {
         &output.validate_rsd_serrf,
     )?;
 
-    let sds_before: Vec<f64> = (0..dataset.values.nrows()).map(|i| std_dev(&output.raw.row(i).to_vec())).collect();
-    let pca_before = serrf_core::pca::pca_first_two(&filter_rows_with_variance(&output.raw, &sds_before));
-    let sds_after: Vec<f64> = (0..dataset.values.nrows()).map(|i| std_dev(&output.serrf.row(i).to_vec())).collect();
-    let pca_after = serrf_core::pca::pca_first_two(&filter_rows_with_variance(&output.serrf, &sds_after));
+    let sds_before: Vec<f64> = (0..dataset.values.nrows())
+        .map(|i| serrf_core::export::std_dev(&output.raw.row(i).to_vec()))
+        .collect();
+    let pca_before = serrf_core::pca::pca_first_two(&serrf_core::export::filter_rows_with_variance(&output.raw, &sds_before));
+    let sds_after: Vec<f64> = (0..dataset.values.nrows())
+        .map(|i| serrf_core::export::std_dev(&output.serrf.row(i).to_vec()))
+        .collect();
+    let pca_after = serrf_core::pca::pca_first_two(&serrf_core::export::filter_rows_with_variance(&output.serrf, &sds_after));
     serrf_core::report::render_report(
         &args.output_dir.join("report.png"),
         &output.qc_rsd_raw,
@@ -59,28 +63,9 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn std_dev(values: &[f64]) -> f64 {
-    let mean = values.iter().sum::<f64>() / values.len() as f64;
-    (values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (values.len() as f64 - 1.0)).sqrt()
-}
-
-fn filter_rows_with_variance(matrix: &ndarray::Array2<f64>, sds: &[f64]) -> ndarray::Array2<f64> {
-    let keep: Vec<usize> = (0..sds.len()).filter(|&i| sds[i] > 0.0).collect();
-    matrix.select(ndarray::Axis(0), &keep)
-}
-
 fn write_matrix_csv(path: &std::path::Path, sample_labels: &[String], compound_labels: &[String], matrix: &ndarray::Array2<f64>) -> anyhow::Result<()> {
-    let mut writer = csv::Writer::from_path(path)?;
-    // Use the pipeline's real sample labels (`PipelineOutput::sample_order`) as column headers,
-    // not generic `sample0`/`sample1` placeholders (I5), so the CSV can be joined back to sample
-    // metadata (batch/time/type).
-    writer.write_record(std::iter::once("label".to_string()).chain(sample_labels.iter().cloned()))?;
-    for (i, label) in compound_labels.iter().enumerate() {
-        let mut row = vec![label.clone()];
-        row.extend(matrix.row(i).iter().map(|v| v.to_string()));
-        writer.write_record(&row)?;
-    }
-    writer.flush()?;
+    let file = std::fs::File::create(path)?;
+    serrf_core::export::write_matrix_csv(file, sample_labels, compound_labels, matrix)?;
     Ok(())
 }
 
@@ -92,29 +77,8 @@ fn write_rsd_csv(
     validate_rsd_raw: &HashMap<String, Vec<f64>>,
     validate_rsd_serrf: &HashMap<String, Vec<f64>>,
 ) -> anyhow::Result<()> {
-    let mut writer = csv::Writer::from_path(path)?;
-    // Extra `{type}_none`/`{type}_SERRF` columns for each validate-type sampleType the pipeline
-    // found (I5), matching R's reference `qc-rsds.csv` format (which has `validate_none`/
-    // `validate_SERRF` columns) instead of silently dropping this already-computed RSD data.
-    let mut validate_types: Vec<&String> = validate_rsd_raw.keys().collect();
-    validate_types.sort();
-
-    let mut header = vec!["label".to_string(), "QC_none".to_string(), "QC_SERRF".to_string()];
-    for t in &validate_types {
-        header.push(format!("{t}_none"));
-        header.push(format!("{t}_SERRF"));
-    }
-    writer.write_record(&header)?;
-
-    for (i, label) in labels.iter().enumerate() {
-        let mut row = vec![label.clone(), raw[i].to_string(), serrf[i].to_string()];
-        for t in &validate_types {
-            row.push(validate_rsd_raw[*t][i].to_string());
-            row.push(validate_rsd_serrf[*t][i].to_string());
-        }
-        writer.write_record(&row)?;
-    }
-    writer.flush()?;
+    let file = std::fs::File::create(path)?;
+    serrf_core::export::write_rsd_csv(file, labels, raw, serrf, validate_rsd_raw, validate_rsd_serrf)?;
     Ok(())
 }
 
@@ -122,36 +86,6 @@ fn write_rsd_csv(
 mod tests {
     use super::*;
     use ndarray::array;
-
-    #[test]
-    fn std_dev_matches_the_hand_computed_sample_standard_deviation() {
-        // mean = 2.0; sample variance = ((1-2)^2 + (2-2)^2 + (3-2)^2) / (3-1) = 1.0
-        let result = std_dev(&[1.0, 2.0, 3.0]);
-        assert!((result - 1.0).abs() < 1e-12, "expected 1.0, got {result}");
-    }
-
-    #[test]
-    fn std_dev_of_a_constant_series_is_zero() {
-        assert_eq!(std_dev(&[5.0, 5.0, 5.0, 5.0]), 0.0);
-    }
-
-    #[test]
-    fn filter_rows_with_variance_drops_rows_with_zero_sd() {
-        let matrix = array![[1.0, 2.0], [3.0, 3.0], [4.0, 6.0]];
-        let sds = [1.0, 0.0, 2.5];
-        let filtered = filter_rows_with_variance(&matrix, &sds);
-        assert_eq!(filtered.shape(), &[2, 2]);
-        assert_eq!(filtered.row(0).to_vec(), vec![1.0, 2.0]);
-        assert_eq!(filtered.row(1).to_vec(), vec![4.0, 6.0]);
-    }
-
-    #[test]
-    fn filter_rows_with_variance_keeps_everything_when_all_sds_are_positive() {
-        let matrix = array![[1.0, 2.0], [3.0, 4.0]];
-        let sds = [0.5, 0.7];
-        let filtered = filter_rows_with_variance(&matrix, &sds);
-        assert_eq!(filtered.shape(), matrix.shape());
-    }
 
     #[test]
     fn write_matrix_csv_writes_a_header_using_the_real_sample_labels() {
