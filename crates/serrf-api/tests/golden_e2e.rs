@@ -25,10 +25,14 @@ async fn the_full_job_lifecycle_completes_for_the_real_bundled_dataset() {
     let body: serde_json::Value = upload_response.json().await.unwrap();
     let job_id = body["job_id"].as_str().unwrap().to_string();
 
-    // SSE stream should eventually reach a terminal event; the real dataset takes minutes.
+    // SSE stream should eventually reach a terminal event; the real dataset takes minutes, and
+    // CI runners have observably fewer/slower cores than local dev machines (this same test ran
+    // in ~342-368s locally but 608.62s on GitHub Actions, consistent with Plan 1's golden-file
+    // tests also taking roughly 2x longer in CI) -- 1800s gives real headroom instead of cutting
+    // it close to the actual measured CI runtime.
     let events_response = client
         .get(format!("{base_url}/api/jobs/{job_id}/events"))
-        .timeout(std::time::Duration::from_secs(600))
+        .timeout(std::time::Duration::from_secs(1800))
         .send()
         .await
         .unwrap();
