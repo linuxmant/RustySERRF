@@ -71,7 +71,10 @@ async fn uploading_an_unparseable_file_returns_400_with_a_structured_error() {
 async fn uploading_a_file_with_an_unsupported_extension_returns_400() {
     let base_url = spawn_app().await;
     let client = reqwest::Client::new();
-    let part = reqwest::multipart::Part::text("whatever").file_name("dataset.txt").mime_str("text/plain").unwrap();
+    let part = reqwest::multipart::Part::text("whatever")
+        .file_name("dataset.txt")
+        .mime_str("text/plain")
+        .unwrap();
     let form = reqwest::multipart::Form::new().part("file", part);
 
     let response = client.post(format!("{base_url}/api/jobs")).multipart(form).send().await.unwrap();
@@ -83,7 +86,10 @@ async fn uploading_a_file_with_an_unsupported_extension_returns_400() {
 async fn a_completed_job_is_reachable_via_the_returned_job_id() {
     let base_url = spawn_app().await;
     let client = reqwest::Client::new();
-    let part = reqwest::multipart::Part::text(valid_csv_fixture()).file_name("dataset.csv").mime_str("text/csv").unwrap();
+    let part = reqwest::multipart::Part::text(valid_csv_fixture())
+        .file_name("dataset.csv")
+        .mime_str("text/csv")
+        .unwrap();
     let form = reqwest::multipart::Form::new().part("file", part);
     let response = client.post(format!("{base_url}/api/jobs")).multipart(form).send().await.unwrap();
     let body: serde_json::Value = response.json().await.unwrap();

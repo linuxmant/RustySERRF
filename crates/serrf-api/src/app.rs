@@ -4,7 +4,9 @@ pub struct AppState {
 }
 
 pub fn build_app() -> axum::Router {
-    let state = AppState { jobs: crate::job::JobStore::new() };
+    let state = AppState {
+        jobs: crate::job::JobStore::new(),
+    };
     axum::Router::new()
         .route("/health", axum::routing::get(health))
         .route("/api/jobs", axum::routing::post(crate::routes::upload::upload))

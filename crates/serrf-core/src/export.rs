@@ -12,12 +12,7 @@ pub fn filter_rows_with_variance(matrix: &ndarray::Array2<f64>, sds: &[f64]) -> 
     matrix.select(ndarray::Axis(0), &keep)
 }
 
-pub fn write_matrix_csv<W: Write>(
-    writer: W,
-    sample_labels: &[String],
-    compound_labels: &[String],
-    matrix: &ndarray::Array2<f64>,
-) -> Result<(), SerrfError> {
+pub fn write_matrix_csv<W: Write>(writer: W, sample_labels: &[String], compound_labels: &[String], matrix: &ndarray::Array2<f64>) -> Result<(), SerrfError> {
     let mut writer = csv::Writer::from_writer(writer);
     writer.write_record(std::iter::once("label".to_string()).chain(sample_labels.iter().cloned()))?;
     for (i, label) in compound_labels.iter().enumerate() {

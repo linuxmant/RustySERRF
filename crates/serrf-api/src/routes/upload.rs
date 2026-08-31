@@ -43,10 +43,24 @@ pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> 
     tokio::task::spawn_blocking(move || {
         let progress_jobs = jobs.clone();
         let result = serrf_core::normalize(&dataset, &samples, &serrf_core::SerrfConfig::default(), move |p| {
-            progress_jobs.push_progress(job_id, JobEvent::Progress { stage: p.stage, current: p.current, total: p.total });
+            progress_jobs.push_progress(
+                job_id,
+                JobEvent::Progress {
+                    stage: p.stage,
+                    current: p.current,
+                    total: p.total,
+                },
+            );
         });
         match result {
-            Ok(output) => jobs.complete(job_id, crate::job::CompletedJob { compound_labels, sample_type, output }),
+            Ok(output) => jobs.complete(
+                job_id,
+                crate::job::CompletedJob {
+                    compound_labels,
+                    sample_type,
+                    output,
+                },
+            ),
             Err(e) => jobs.fail(job_id, e.to_string()),
         }
     });

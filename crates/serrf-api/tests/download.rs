@@ -33,7 +33,10 @@ fn valid_csv_fixture() -> String {
 }
 
 async fn upload_and_wait_for_completion(base_url: &str, client: &reqwest::Client) -> String {
-    let part = reqwest::multipart::Part::text(valid_csv_fixture()).file_name("dataset.csv").mime_str("text/csv").unwrap();
+    let part = reqwest::multipart::Part::text(valid_csv_fixture())
+        .file_name("dataset.csv")
+        .mime_str("text/csv")
+        .unwrap();
     let form = reqwest::multipart::Form::new().part("file", part);
     let response = client.post(format!("{base_url}/api/jobs")).multipart(form).send().await.unwrap();
     let body: serde_json::Value = response.json().await.unwrap();

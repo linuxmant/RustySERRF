@@ -33,7 +33,10 @@ fn valid_csv_fixture() -> String {
 }
 
 async fn upload_fixture(base_url: &str, client: &reqwest::Client) -> String {
-    let part = reqwest::multipart::Part::text(valid_csv_fixture()).file_name("dataset.csv").mime_str("text/csv").unwrap();
+    let part = reqwest::multipart::Part::text(valid_csv_fixture())
+        .file_name("dataset.csv")
+        .mime_str("text/csv")
+        .unwrap();
     let form = reqwest::multipart::Form::new().part("file", part);
     let response = client.post(format!("{base_url}/api/jobs")).multipart(form).send().await.unwrap();
     let body: serde_json::Value = response.json().await.unwrap();
@@ -50,7 +53,10 @@ async fn events_stream_ends_with_a_terminal_event() {
     assert_eq!(response.status(), 200);
     let body = response.text().await.unwrap();
 
-    assert!(body.contains("event: completed") || body.contains("event: failed"), "expected a terminal SSE event, got: {body}");
+    assert!(
+        body.contains("event: completed") || body.contains("event: failed"),
+        "expected a terminal SSE event, got: {body}"
+    );
 }
 
 #[tokio::test]

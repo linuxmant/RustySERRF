@@ -14,6 +14,12 @@ impl JobId {
     }
 }
 
+impl Default for JobId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl std::fmt::Display for JobId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -43,7 +49,7 @@ pub struct CompletedJob {
 
 enum JobResult {
     Pending,
-    Done(CompletedJob),
+    Done(Box<CompletedJob>),
     Errored(String),
 }
 
@@ -66,13 +72,21 @@ pub struct JobStore {
 
 impl JobStore {
     pub fn new() -> Self {
-        JobStore { jobs: Arc::new(RwLock::new(HashMap::new())) }
+        JobStore {
+            jobs: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 
     pub fn create(&self) -> (JobId, tokio::sync::watch::Receiver<JobEvent>) {
         let id = JobId::new();
         let (tx, rx) = tokio::sync::watch::channel(JobEvent::Queued);
-        self.jobs.write().unwrap().insert(id, JobHandle { events: tx, result: JobResult::Pending });
+        self.jobs.write().unwrap().insert(
+            id,
+            JobHandle {
+                events: tx,
+                result: JobResult::Pending,
+            },
+        );
         (id, rx)
     }
 
@@ -84,7 +98,7 @@ impl JobStore {
 
     pub fn complete(&self, id: JobId, completed: CompletedJob) {
         if let Some(handle) = self.jobs.write().unwrap().get_mut(&id) {
-            handle.result = JobResult::Done(completed);
+            handle.result = JobResult::Done(Box::new(completed));
             let _ = handle.events.send(JobEvent::Completed);
         }
     }
@@ -155,18 +169,36 @@ mod tests {
     fn push_progress_updates_the_watched_event() {
         let store = JobStore::new();
         let (id, mut rx) = store.create();
-        store.push_progress(id, JobEvent::Progress { stage: "SERRF normalization".into(), current: 3, total: 10 });
+        store.push_progress(
+            id,
+            JobEvent::Progress {
+                stage: "SERRF normalization".into(),
+                current: 3,
+                total: 10,
+            },
+        );
         assert!(rx.has_changed().unwrap());
         assert_eq!(
             *rx.borrow_and_update(),
-            JobEvent::Progress { stage: "SERRF normalization".into(), current: 3, total: 10 }
+            JobEvent::Progress {
+                stage: "SERRF normalization".into(),
+                current: 3,
+                total: 10
+            }
         );
     }
 
     #[test]
     fn push_progress_on_an_unknown_job_is_a_silent_no_op() {
         let store = JobStore::new();
-        store.push_progress(JobId::new(), JobEvent::Progress { stage: "x".into(), current: 1, total: 1 });
+        store.push_progress(
+            JobId::new(),
+            JobEvent::Progress {
+                stage: "x".into(),
+                current: 1,
+                total: 1,
+            },
+        );
     }
 
     #[test]

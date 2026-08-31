@@ -42,8 +42,14 @@ pub async fn result(State(state): State<AppState>, Path(id): Path<String>) -> Re
                 qc_rsd_serrf: completed.output.qc_rsd_serrf.clone(),
                 validate_rsd_raw: completed.output.validate_rsd_raw.clone(),
                 validate_rsd_serrf: completed.output.validate_rsd_serrf.clone(),
-                pca_before: PcaJson { pc1: pca_before.pc1, pc2: pca_before.pc2 },
-                pca_after: PcaJson { pc1: pca_after.pc1, pc2: pca_after.pc2 },
+                pca_before: PcaJson {
+                    pc1: pca_before.pc1,
+                    pc2: pca_before.pc2,
+                },
+                pca_after: PcaJson {
+                    pc1: pca_after.pc1,
+                    pc2: pca_after.pc2,
+                },
             }
         })
         .ok_or(ApiError::NotFound)?;

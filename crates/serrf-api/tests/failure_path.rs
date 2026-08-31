@@ -38,7 +38,10 @@ fn csv_with_one_all_missing_compound() -> String {
 async fn a_job_with_one_unnormalizable_compound_still_completes_successfully() {
     let base_url = spawn_app().await;
     let client = reqwest::Client::new();
-    let part = reqwest::multipart::Part::text(csv_with_one_all_missing_compound()).file_name("dataset.csv").mime_str("text/csv").unwrap();
+    let part = reqwest::multipart::Part::text(csv_with_one_all_missing_compound())
+        .file_name("dataset.csv")
+        .mime_str("text/csv")
+        .unwrap();
     let form = reqwest::multipart::Form::new().part("file", part);
     let response = client.post(format!("{base_url}/api/jobs")).multipart(form).send().await.unwrap();
     let body: serde_json::Value = response.json().await.unwrap();
@@ -50,7 +53,10 @@ async fn a_job_with_one_unnormalizable_compound_still_completes_successfully() {
             let result: serde_json::Value = status.json().await.unwrap();
             assert_eq!(result["compound_labels"].as_array().unwrap().len(), 2);
             // Compound1 (index 1) comes back as NaN, not a job failure.
-            assert!(result["qc_rsd_serrf"][1].as_f64().is_none(), "expected NaN (non-numeric in JSON) for the unnormalizable compound");
+            assert!(
+                result["qc_rsd_serrf"][1].as_f64().is_none(),
+                "expected NaN (non-numeric in JSON) for the unnormalizable compound"
+            );
             assert!(result["qc_rsd_serrf"][0].as_f64().is_some(), "expected Compound0 to normalize normally");
             return;
         }
