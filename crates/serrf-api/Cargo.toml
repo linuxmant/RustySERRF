@@ -1,0 +1,27 @@
+[package]
+name = "serrf-api"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "serrf-api"
+path = "src/main.rs"
+
+[lib]
+name = "serrf_api"
+path = "src/lib.rs"
+
+[dependencies]
+serrf-core = { path = "../serrf-core" }
+axum = { version = "0.7", features = ["multipart"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+tempfile = "3"
+async-stream = "0.3"
+zip = "0.6"
+thiserror = "1.0"
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
