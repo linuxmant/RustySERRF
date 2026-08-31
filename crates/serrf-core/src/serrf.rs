@@ -197,6 +197,11 @@ pub fn serrf_normalize_group(input: &GroupInput, seed: u64, mut progress: impl F
         rescale_to_median(&mut row_normalized, &all_qc_indices, &all.row(j).to_vec());
         rescale_to_median(&mut row_normalized, &all_target_indices, &all.row(j).to_vec());
 
+        // post-hoc QC rescale ("c factor", serrfR lines 656-658), run after the median rescale
+        // above like in app.R. The boxplot.stats outlier swap (app.R lines 604-617) between
+        // those two steps is deliberately not ported (Task 12's brief excluded it by name).
+        apply_c_factor(&mut row_normalized, &all_qc_indices, &all_target_indices, &all.row(j).to_vec());
+
         for c in 0..all.ncols() {
             normalized[[j, c]] = row_normalized[c];
         }
@@ -218,6 +223,31 @@ fn rescale_to_median(row: &mut [f64], indices: &[usize], original: &[f64]) {
         for &i in indices {
             row[i] *= factor;
         }
+    }
+}
+
+/// Post-hoc QC rescale ("c factor", app.R lines 656-658): blends the raw QC/target medians and
+/// spread against the already-normalized target's median/spread into a single multiplier applied
+/// to the normalized QC values only. Guards against non-positive and non-finite `c` (R's
+/// `ifelse(c>0,c,1)` plus this port's stricter no-panic invariant: a NaN/Inf `c` must never
+/// poison the row) by falling back to a factor of 1, i.e. leaving the QC values unchanged.
+fn apply_c_factor(row: &mut [f64], qc_indices: &[usize], target_indices: &[usize], raw: &[f64]) {
+    let mut normalized_target: Vec<f64> = target_indices.iter().map(|&i| row[i]).collect();
+    let mut normalized_qc: Vec<f64> = qc_indices.iter().map(|&i| row[i]).collect();
+    let mut raw_qc: Vec<f64> = qc_indices.iter().map(|&i| raw[i]).collect();
+    let mut raw_target: Vec<f64> = target_indices.iter().map(|&i| raw[i]).collect();
+
+    let normalized_target_median = median(&mut normalized_target);
+    let normalized_qc_median = median(&mut normalized_qc);
+    let raw_qc_median = median(&mut raw_qc);
+    let raw_target_median = median(&mut raw_target);
+    let raw_target_sd = sample_std_dev(&raw_target);
+    let normalized_target_sd = sample_std_dev(&normalized_target);
+
+    let c = (normalized_target_median + (raw_qc_median - raw_target_median) / raw_target_sd * normalized_target_sd) / normalized_qc_median;
+    let factor = if c.is_finite() && c > 0.0 { c } else { 1.0 };
+    for &i in qc_indices {
+        row[i] *= factor;
     }
 }
 
@@ -393,6 +423,81 @@ mod tests {
         assert_eq!(output.normed_target.shape(), target.shape());
         assert!(output.normed_train.iter().all(|v| v.is_finite()));
         assert!(output.normed_target.iter().all(|v| v.is_finite()));
+    }
+
+    // I4 regression tests: app.R lines 655-658 apply a post-hoc "c factor" that rescales the
+    // normalized QC values using a ratio of raw QC/target medians and standard deviations vs.
+    // the normalized target's median/sd. This was never ported (documented gap from Task 16's
+    // review). RSD is scale-invariant to a uniform per-row QC multiplier, so the golden RSD test
+    // can't catch a missing c factor — these tests exercise `apply_c_factor` directly.
+
+    #[test]
+    fn apply_c_factor_scales_qc_values_when_normalized_sample_spread_differs_from_raw() {
+        let raw = vec![10.0, 20.0, 30.0, 40.0, 100.0, 200.0, 300.0];
+        let qc_indices = vec![0, 1, 2, 3];
+        let target_indices = vec![4, 5, 6];
+        // normalized QC unchanged from raw (median already 25, matching rescale's guarantee);
+        // normalized sample keeps the raw median (200) but with half the raw spread (sd 50 vs 100).
+        let mut row = vec![10.0, 20.0, 30.0, 40.0, 150.0, 200.0, 250.0];
+
+        apply_c_factor(&mut row, &qc_indices, &target_indices, &raw);
+
+        // c = (200 + (-175/100)*50) / 25 = 4.5
+        let expected_qc: [f64; 4] = [45.0, 90.0, 135.0, 180.0];
+        for (i, &idx) in qc_indices.iter().enumerate() {
+            assert!((row[idx] - expected_qc[i]).abs() < 1e-9, "qc[{idx}] = {}, expected {}", row[idx], expected_qc[i]);
+        }
+        // target values are untouched by the c factor
+        assert_eq!(row[4], 150.0);
+        assert_eq!(row[5], 200.0);
+        assert_eq!(row[6], 250.0);
+    }
+
+    #[test]
+    fn apply_c_factor_leaves_qc_unchanged_when_c_is_non_positive() {
+        let raw = vec![10.0, 20.0, 30.0, 40.0, 100.0, 200.0, 300.0];
+        let qc_indices = vec![0, 1, 2, 3];
+        let target_indices = vec![4, 5, 6];
+        // sample spread (sd 200) large enough to push c negative: (200 + (-175/100)*200)/25 = -6
+        let mut row = vec![10.0, 20.0, 30.0, 40.0, 0.0, 200.0, 400.0];
+        let before = row.clone();
+
+        apply_c_factor(&mut row, &qc_indices, &target_indices, &raw);
+
+        assert_eq!(row, before, "c <= 0 must fall back to a no-op factor of 1");
+    }
+
+    #[test]
+    fn apply_c_factor_leaves_qc_unchanged_when_c_is_non_finite() {
+        // raw sample values are constant (sd = 0), so the B/C term divides by zero.
+        let raw = vec![200.0, 300.0, 400.0, 200.0, 200.0, 200.0];
+        let qc_indices = vec![0, 1, 2];
+        let target_indices = vec![3, 4, 5];
+        let mut row = vec![200.0, 300.0, 400.0, 150.0, 200.0, 250.0];
+        let before = row.clone();
+
+        apply_c_factor(&mut row, &qc_indices, &target_indices, &raw);
+
+        assert_eq!(row, before, "a non-finite c must fall back to a no-op factor of 1, never poison the row");
+    }
+
+    #[test]
+    fn c_factor_is_a_no_op_when_the_rf_branch_is_skipped_entirely() {
+        // num_vars: 0 forces `select_variables` to always return an empty selection, so every
+        // batch takes the raw-passthrough branch and the final rescale is a no-op (normalized
+        // already equals raw). In that identity case the c factor must compute to exactly 1 and
+        // leave the QC values as the untouched raw values, proving it's wired in without
+        // corrupting the already-working pass-through path.
+        let train = ndarray::arr2(&[[10.0, 20.0, 30.0, 40.0]]);
+        let target = ndarray::arr2(&[[100.0, 200.0, 300.0]]);
+        let train_batch = vec!["A".to_string(); 4];
+        let target_batch = vec!["A".to_string(); 3];
+        let input = GroupInput { train: train.view(), target: target.view(), train_batch: &train_batch, target_batch: &target_batch, num_vars: 0 };
+
+        let output = serrf_normalize_group(&input, 1, |_, _| {});
+
+        assert_eq!(output.normed_train.row(0).to_vec(), vec![10.0, 20.0, 30.0, 40.0]);
+        assert_eq!(output.normed_target.row(0).to_vec(), vec![100.0, 200.0, 300.0]);
     }
 
     #[test]

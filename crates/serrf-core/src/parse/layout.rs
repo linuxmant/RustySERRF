@@ -5,10 +5,22 @@ use std::collections::HashMap;
 
 pub(crate) fn grid_to_dataset(grid: &[Vec<Option<String>>]) -> Result<Dataset, SerrfError> {
     let nrows = grid.len();
-    let ncols = grid.first().map(|r| r.len()).unwrap_or(0);
+    // Width is the widest row, not just the first: a ragged input (e.g. a malformed CSV row
+    // missing trailing commas) must not panic when a shorter row is indexed up to this width —
+    // pad it out with `None` (read as blank) instead.
+    let ncols = grid.iter().map(|r| r.len()).max().unwrap_or(0);
     if nrows == 0 || ncols == 0 {
         return Err(SerrfError::Parse("input file is empty".into()));
     }
+    let grid: Vec<Vec<Option<String>>> = grid
+        .iter()
+        .map(|row| {
+            let mut row = row.clone();
+            row.resize(ncols, None);
+            row
+        })
+        .collect();
+    let grid = &grid[..];
 
     let sample_col_start = grid[0]
         .iter()
@@ -140,6 +152,23 @@ mod tests {
         assert_eq!(dataset.values[[0, 1]], 20.5);
         assert_eq!(dataset.values[[1, 0]], 15.0);
         assert_eq!(dataset.values[[1, 1]], 25.0);
+    }
+
+    #[test]
+    fn does_not_panic_on_a_ragged_row_shorter_than_the_header() {
+        // Minor finding: read_csv_grid's `flexible(true)` accepts rows of unequal length, but
+        // grid_to_dataset used `grid.first().len()` as ncols and indexed every row up to it,
+        // panicking with an out-of-bounds index on any short row (e.g. a malformed CSV missing
+        // trailing commas). A short row's missing cells should just read as blank, not crash.
+        let mut grid = sample_grid();
+        let last = grid.len() - 1;
+        grid[last].pop(); // row is now shorter than the shared header width
+
+        let dataset = grid_to_dataset(&grid).unwrap();
+
+        assert_eq!(dataset.compounds.label, vec!["Compound1", "Compound2"]);
+        assert_eq!(dataset.values.shape(), &[2, 2]);
+        assert!(dataset.values[[1, 1]].is_nan(), "the value dropped by the short row should read as missing, not panic");
     }
 
     #[test]
