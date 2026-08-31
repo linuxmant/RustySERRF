@@ -8,6 +8,7 @@ pub fn build_app() -> axum::Router {
     axum::Router::new()
         .route("/health", axum::routing::get(health))
         .route("/api/jobs", axum::routing::post(crate::routes::upload::upload))
+        .route("/api/jobs/:id/events", axum::routing::get(crate::routes::events::events))
         .with_state(state)
 }
 
