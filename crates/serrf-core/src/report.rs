@@ -17,7 +17,11 @@ pub fn render_report(
     let median = |v: &[f64]| {
         let mut sorted: Vec<f64> = v.iter().cloned().filter(|x| x.is_finite()).collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        if sorted.is_empty() { 0.0 } else { sorted[sorted.len() / 2] }
+        if sorted.is_empty() {
+            0.0
+        } else {
+            sorted[sorted.len() / 2]
+        }
     };
     let raw_median = median(qc_rsd_raw) * 100.0;
     let serrf_median = median(qc_rsd_serrf) * 100.0;
@@ -46,12 +50,7 @@ pub fn render_report(
     Ok(())
 }
 
-fn draw_pca(
-    area: &DrawingArea<BitMapBackend, plotters::coord::Shift>,
-    title: &str,
-    pca: &PcaResult,
-    sample_type: &[Option<String>],
-) -> Result<(), SerrfError> {
+fn draw_pca(area: &DrawingArea<BitMapBackend, plotters::coord::Shift>, title: &str, pca: &PcaResult, sample_type: &[Option<String>]) -> Result<(), SerrfError> {
     let x_range = range_with_margin(&pca.pc1);
     let y_range = range_with_margin(&pca.pc2);
     let mut chart = ChartBuilder::on(area)
@@ -91,8 +90,16 @@ mod tests {
     fn writes_a_nonempty_png_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("report.png");
-        let pca = PcaResult { pc1: vec![1.0, 2.0, 3.0, 4.0], pc2: vec![1.0, -1.0, 1.0, -1.0] };
-        let sample_type = vec![Some("qc".to_string()), Some("qc".to_string()), Some("sample".to_string()), Some("sample".to_string())];
+        let pca = PcaResult {
+            pc1: vec![1.0, 2.0, 3.0, 4.0],
+            pc2: vec![1.0, -1.0, 1.0, -1.0],
+        };
+        let sample_type = vec![
+            Some("qc".to_string()),
+            Some("qc".to_string()),
+            Some("sample".to_string()),
+            Some("sample".to_string()),
+        ];
         render_report(&path, &[0.3, 0.4], &[0.05, 0.06], &pca, &pca, &sample_type).unwrap();
         assert!(path.exists());
         assert!(std::fs::metadata(&path).unwrap().len() > 0);

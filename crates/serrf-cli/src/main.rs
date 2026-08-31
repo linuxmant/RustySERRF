@@ -21,8 +21,18 @@ fn main() -> anyhow::Result<()> {
 
     // Named "imputed", not "raw": `output.raw` is `dataset.values` after `impute_missing` has
     // already filled in missing cells (pipeline.rs), so it is not the literal raw input matrix.
-    write_matrix_csv(&args.output_dir.join("normalized-imputed.csv"), &output.sample_order, &dataset.compounds.label, &output.raw)?;
-    write_matrix_csv(&args.output_dir.join("normalized-serrf.csv"), &output.sample_order, &dataset.compounds.label, &output.serrf)?;
+    write_matrix_csv(
+        &args.output_dir.join("normalized-imputed.csv"),
+        &output.sample_order,
+        &dataset.compounds.label,
+        &output.raw,
+    )?;
+    write_matrix_csv(
+        &args.output_dir.join("normalized-serrf.csv"),
+        &output.sample_order,
+        &dataset.compounds.label,
+        &output.serrf,
+    )?;
     write_rsd_csv(
         &args.output_dir.join("qc-rsds.csv"),
         &dataset.compounds.label,

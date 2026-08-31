@@ -32,7 +32,13 @@ pub fn cross_validate_qc(qc: &Array2<f64>, qc_batch: &[String], folds: usize, se
         let train_batch: Vec<String> = train_idx.iter().map(|&i| qc_batch[i].clone()).collect();
         let target_batch: Vec<String> = test_idx.iter().map(|&i| qc_batch[i].clone()).collect();
 
-        let input = GroupInput { train: train.view(), target: target.view(), train_batch: &train_batch, target_batch: &target_batch, num_vars };
+        let input = GroupInput {
+            train: train.view(),
+            target: target.view(),
+            train_batch: &train_batch,
+            target_batch: &target_batch,
+            num_vars,
+        };
         let output = serrf_normalize_group(&input, seed + fold as u64, |_, _| {});
 
         let compound_rsds: Vec<f64> = (0..n_compounds).map(|i| rsd(&output.normed_target.row(i).to_vec())).collect();
@@ -42,7 +48,11 @@ pub fn cross_validate_qc(qc: &Array2<f64>, qc_batch: &[String], folds: usize, se
     (0..n_compounds)
         .map(|i| {
             let values: Vec<f64> = fold_rsds.iter().map(|f| f[i]).filter(|v| v.is_finite()).collect();
-            if values.is_empty() { f64::NAN } else { values.iter().sum::<f64>() / values.len() as f64 }
+            if values.is_empty() {
+                f64::NAN
+            } else {
+                values.iter().sum::<f64>() / values.len() as f64
+            }
         })
         .collect()
 }

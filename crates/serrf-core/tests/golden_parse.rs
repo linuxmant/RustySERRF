@@ -9,9 +9,6 @@ fn parses_the_bundled_example_dataset() {
 
     // cross-check against the reference sample metadata already exported from R
     let mut reader = csv::Reader::from_path("../../golden/expected/comb_p.csv").unwrap();
-    let expected_batches: Vec<String> = reader
-        .records()
-        .map(|r| r.unwrap().get(1).unwrap().to_string())
-        .collect();
+    let expected_batches: Vec<String> = reader.records().map(|r| r.unwrap().get(1).unwrap().to_string()).collect();
     assert_eq!(dataset.samples.columns["batch"], expected_batches);
 }

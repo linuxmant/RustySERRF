@@ -46,10 +46,11 @@ pub(crate) fn grid_to_dataset(grid: &[Vec<Option<String>>]) -> Result<Dataset, S
     for name in field_names_p.iter().skip(1) {
         sample_columns.entry(name.clone()).or_default();
     }
+    // `col` indexes across rows (`grid[r][col]`), not into `grid` itself, so clippy's suggested
+    // `grid.iter()` rewrite would iterate the wrong axis.
+    #[allow(clippy::needless_range_loop)]
     for col in (sample_col_start + 1)..ncols {
-        let raw: Vec<String> = (0..=compound_row_start)
-            .map(|r| grid[r][col].clone().unwrap_or_default())
-            .collect();
+        let raw: Vec<String> = (0..=compound_row_start).map(|r| grid[r][col].clone().unwrap_or_default()).collect();
         let ordered = rotate_last_to_front(&raw);
         sample_label.push(if ordered[0].is_empty() { "na".to_string() } else { ordered[0].clone() });
         for (name, value) in field_names_p.iter().skip(1).zip(ordered.iter().skip(1)) {
@@ -68,10 +69,11 @@ pub(crate) fn grid_to_dataset(grid: &[Vec<Option<String>>]) -> Result<Dataset, S
     for name in field_names_f.iter().skip(1) {
         compound_columns.entry(name.clone()).or_default();
     }
+    // `row` indexes across columns (`grid[row][c]`), not into `grid` itself, so clippy's
+    // suggested `grid.iter()` rewrite would iterate the wrong axis.
+    #[allow(clippy::needless_range_loop)]
     for row in (compound_row_start + 1)..nrows {
-        let raw: Vec<String> = (0..=sample_col_start)
-            .map(|c| grid[row][c].clone().unwrap_or_default())
-            .collect();
+        let raw: Vec<String> = (0..=sample_col_start).map(|c| grid[row][c].clone().unwrap_or_default()).collect();
         let ordered = rotate_last_to_front(&raw);
         compound_label.push(if ordered[0].is_empty() { "na".to_string() } else { ordered[0].clone() });
         for (name, value) in field_names_f.iter().skip(1).zip(ordered.iter().skip(1)) {
@@ -94,8 +96,14 @@ pub(crate) fn grid_to_dataset(grid: &[Vec<Option<String>>]) -> Result<Dataset, S
     }
 
     Ok(Dataset {
-        samples: RawSampleTable { label: sample_label, columns: sample_columns },
-        compounds: RawCompoundTable { label: compound_label, columns: compound_columns },
+        samples: RawSampleTable {
+            label: sample_label,
+            columns: sample_columns,
+        },
+        compounds: RawCompoundTable {
+            label: compound_label,
+            columns: compound_columns,
+        },
         values,
     })
 }
@@ -111,7 +119,9 @@ fn rotate_last_to_front(v: &[String]) -> Vec<String> {
 mod tests {
     use super::*;
 
-    fn cell(s: &str) -> Option<String> { Some(s.to_string()) }
+    fn cell(s: &str) -> Option<String> {
+        Some(s.to_string())
+    }
 
     /// A minimal 6x4 grid mirroring the real file format:
     /// row0-2: batch/sampleType/time values per sample (col0 = NA, col1 = corner field name)
@@ -168,7 +178,10 @@ mod tests {
 
         assert_eq!(dataset.compounds.label, vec!["Compound1", "Compound2"]);
         assert_eq!(dataset.values.shape(), &[2, 2]);
-        assert!(dataset.values[[1, 1]].is_nan(), "the value dropped by the short row should read as missing, not panic");
+        assert!(
+            dataset.values[[1, 1]].is_nan(),
+            "the value dropped by the short row should read as missing, not panic"
+        );
     }
 
     #[test]

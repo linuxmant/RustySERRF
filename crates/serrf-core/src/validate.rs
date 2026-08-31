@@ -11,9 +11,11 @@ pub struct ValidatedSamples {
 }
 
 pub fn validate(dataset: &Dataset) -> Result<ValidatedSamples, SerrfError> {
-    let sample_type_raw = dataset.samples.columns.get("sampleType").ok_or_else(|| {
-        SerrfError::Validation("Your data must have 'sampleType'. Please see example data for more information.".into())
-    })?;
+    let sample_type_raw = dataset
+        .samples
+        .columns
+        .get("sampleType")
+        .ok_or_else(|| SerrfError::Validation("Your data must have 'sampleType'. Please see example data for more information.".into()))?;
     let sample_type: Vec<Option<String>> = sample_type_raw
         .iter()
         .map(|s| if s.trim().is_empty() { None } else { Some(s.clone()) })
@@ -26,12 +28,17 @@ pub fn validate(dataset: &Dataset) -> Result<ValidatedSamples, SerrfError> {
         ));
     }
 
-    let time_raw = dataset.samples.columns.get("time").ok_or_else(|| {
-        SerrfError::Validation("Your data must have 'time'. Please see example data for more information.".into())
-    })?;
+    let time_raw = dataset
+        .samples
+        .columns
+        .get("time")
+        .ok_or_else(|| SerrfError::Validation("Your data must have 'time'. Please see example data for more information.".into()))?;
     let time: Vec<f64> = time_raw
         .iter()
-        .map(|s| s.parse::<f64>().map_err(|_| SerrfError::Validation(format!("'time' value '{s}' is not numeric"))))
+        .map(|s| {
+            s.parse::<f64>()
+                .map_err(|_| SerrfError::Validation(format!("'time' value '{s}' is not numeric")))
+        })
         .collect::<Result<_, _>>()?;
     let mut seen = HashSet::new();
     for t in &time {
@@ -68,7 +75,12 @@ pub fn validate(dataset: &Dataset) -> Result<ValidatedSamples, SerrfError> {
         ));
     }
 
-    Ok(ValidatedSamples { label: dataset.samples.label.clone(), batch, sample_type, time })
+    Ok(ValidatedSamples {
+        label: dataset.samples.label.clone(),
+        batch,
+        sample_type,
+        time,
+    })
 }
 
 #[cfg(test)]
@@ -80,17 +92,26 @@ mod tests {
 
     fn dataset_with_samples(columns: HashMap<String, Vec<String>>, n: usize) -> Dataset {
         Dataset {
-            samples: RawSampleTable { label: (0..n).map(|i| format!("s{i}")).collect(), columns },
-            compounds: RawCompoundTable { label: vec!["c1".into()], columns: HashMap::new() },
+            samples: RawSampleTable {
+                label: (0..n).map(|i| format!("s{i}")).collect(),
+                columns,
+            },
+            compounds: RawCompoundTable {
+                label: vec!["c1".into()],
+                columns: HashMap::new(),
+            },
             values: Array2::from_elem((1, n), 1.0),
         }
     }
 
     fn valid_columns() -> HashMap<String, Vec<String>> {
         let mut cols = HashMap::new();
-        cols.insert("sampleType".into(), vec!["qc","qc","qc","qc","qc","qc","sample","sample"].iter().map(|s| s.to_string()).collect());
+        cols.insert(
+            "sampleType".into(),
+            ["qc", "qc", "qc", "qc", "qc", "qc", "sample", "sample"].iter().map(|s| s.to_string()).collect(),
+        );
         cols.insert("time".into(), (1..=8).map(|i| i.to_string()).collect());
-        cols.insert("batch".into(), vec!["A"; 8].iter().map(|s| s.to_string()).collect());
+        cols.insert("batch".into(), ["A"; 8].iter().map(|s| s.to_string()).collect());
         cols
     }
 
@@ -113,7 +134,7 @@ mod tests {
     #[test]
     fn rejects_sample_type_without_qc_and_sample() {
         let mut cols = valid_columns();
-        cols.insert("sampleType".into(), vec!["qc"; 8].iter().map(|s| s.to_string()).collect());
+        cols.insert("sampleType".into(), ["qc"; 8].iter().map(|s| s.to_string()).collect());
         let dataset = dataset_with_samples(cols, 8);
         assert!(validate(&dataset).unwrap_err().to_string().contains("qc"));
     }
@@ -129,7 +150,7 @@ mod tests {
     #[test]
     fn rejects_duplicate_time_values() {
         let mut cols = valid_columns();
-        cols.insert("time".into(), vec!["1", "1", "3", "4", "5", "6", "7", "8"].iter().map(|s| s.to_string()).collect());
+        cols.insert("time".into(), ["1", "1", "3", "4", "5", "6", "7", "8"].iter().map(|s| s.to_string()).collect());
         let dataset = dataset_with_samples(cols, 8);
         assert!(validate(&dataset).unwrap_err().to_string().contains("duplicated"));
     }
@@ -149,11 +170,11 @@ mod tests {
         // never appeared in the map and the `<6` check couldn't see it, letting this through
         // and later panicking in `serrf.rs` (mean of an empty qc_cols slice is 0.0/0.0 = NaN).
         let mut cols = HashMap::new();
-        let sample_type: Vec<String> = vec!["qc", "qc", "qc", "qc", "qc", "qc", "sample", "sample", "sample", "sample"]
+        let sample_type: Vec<String> = ["qc", "qc", "qc", "qc", "qc", "qc", "sample", "sample", "sample", "sample"]
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let batch: Vec<String> = vec!["A", "A", "A", "A", "A", "A", "A", "A", "B", "B"].iter().map(|s| s.to_string()).collect();
+        let batch: Vec<String> = ["A", "A", "A", "A", "A", "A", "A", "A", "B", "B"].iter().map(|s| s.to_string()).collect();
         cols.insert("sampleType".into(), sample_type);
         cols.insert("time".into(), (1..=10).map(|i| i.to_string()).collect());
         cols.insert("batch".into(), batch);
@@ -167,7 +188,10 @@ mod tests {
         let mut cols = valid_columns();
         cols.insert(
             "sampleType".into(),
-            vec!["qc","qc","sample","sample","sample","sample","sample","sample"].iter().map(|s| s.to_string()).collect(),
+            ["qc", "qc", "sample", "sample", "sample", "sample", "sample", "sample"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
         );
         let dataset = dataset_with_samples(cols, 8);
         assert!(validate(&dataset).unwrap_err().to_string().contains("QC"));

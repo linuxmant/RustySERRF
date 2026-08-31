@@ -3,8 +3,15 @@ use rand::Rng;
 
 #[derive(Debug, Clone)]
 pub(crate) enum Node {
-    Leaf { value: f64 },
-    Split { feature: usize, threshold: f64, left: Box<Node>, right: Box<Node> },
+    Leaf {
+        value: f64,
+    },
+    Split {
+        feature: usize,
+        threshold: f64,
+        left: Box<Node>,
+        right: Box<Node>,
+    },
 }
 
 pub(crate) struct TreeConfig {
@@ -37,7 +44,7 @@ pub(crate) fn build_tree(x: &[Vec<f64>], y: &[f64], indices: &[usize], config: &
                 continue;
             }
             let reduction = variance_reduction(y, indices, &left, &right);
-            if best.map_or(true, |(_, _, best_r)| reduction > best_r) {
+            if best.is_none_or(|(_, _, best_r)| reduction > best_r) {
                 best = Some((feature, threshold, reduction));
             }
         }
@@ -60,8 +67,17 @@ pub(crate) fn build_tree(x: &[Vec<f64>], y: &[f64], indices: &[usize], config: &
 pub(crate) fn predict(node: &Node, row: &[f64]) -> f64 {
     match node {
         Node::Leaf { value } => *value,
-        Node::Split { feature, threshold, left, right } => {
-            if row[*feature] <= *threshold { predict(left, row) } else { predict(right, row) }
+        Node::Split {
+            feature,
+            threshold,
+            left,
+            right,
+        } => {
+            if row[*feature] <= *threshold {
+                predict(left, row)
+            } else {
+                predict(right, row)
+            }
         }
     }
 }

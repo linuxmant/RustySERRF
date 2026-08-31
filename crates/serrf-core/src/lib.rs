@@ -10,8 +10,8 @@ pub mod preprocess;
 pub mod report;
 pub mod rsd;
 pub mod serrf;
-pub mod validate;
 mod tree;
+pub mod validate;
 
 pub use pipeline::{normalize, PipelineOutput, Progress, SerrfConfig};
 

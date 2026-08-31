@@ -17,7 +17,10 @@ impl RandomForest {
     pub fn train(x: &[Vec<f64>], y: &[f64], config: &ForestConfig) -> Self {
         let n = x.len();
         let mut rng = ChaCha8Rng::seed_from_u64(config.seed);
-        let tree_config = TreeConfig { mtry: config.mtry, min_node_size: config.min_node_size };
+        let tree_config = TreeConfig {
+            mtry: config.mtry,
+            min_node_size: config.min_node_size,
+        };
         let trees = (0..config.num_trees)
             .map(|_| {
                 let bootstrap: Vec<usize> = (0..n).map(|_| rng.gen_range(0..n)).collect();
@@ -51,7 +54,12 @@ mod tests {
     fn predicts_close_to_a_simple_linear_relationship() {
         let x: Vec<Vec<f64>> = (0..40).map(|i| vec![i as f64]).collect();
         let y: Vec<f64> = (0..40).map(|i| 2.0 * i as f64).collect();
-        let config = ForestConfig { num_trees: 50, mtry: 1, min_node_size: 2, seed: 42 };
+        let config = ForestConfig {
+            num_trees: 50,
+            mtry: 1,
+            min_node_size: 2,
+            seed: 42,
+        };
         let forest = RandomForest::train(&x, &y, &config);
         let prediction = forest.predict(&[20.0]);
         assert!((prediction - 40.0).abs() < 5.0, "expected close to 40.0, got {prediction}");

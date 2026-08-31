@@ -2,10 +2,7 @@ use crate::error::SerrfError;
 use std::path::Path;
 
 pub fn read_csv_grid(path: &Path) -> Result<Vec<Vec<Option<String>>>, SerrfError> {
-    let mut reader = csv::ReaderBuilder::new()
-        .has_headers(false)
-        .flexible(true)
-        .from_path(path)?;
+    let mut reader = csv::ReaderBuilder::new().has_headers(false).flexible(true).from_path(path)?;
     let mut grid = Vec::new();
     for record in reader.records() {
         let record = record?;
@@ -14,7 +11,11 @@ pub fn read_csv_grid(path: &Path) -> Result<Vec<Vec<Option<String>>>, SerrfError
                 .iter()
                 .map(|cell| {
                     let trimmed = cell.trim();
-                    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
                 })
                 .collect(),
         );
@@ -35,10 +36,7 @@ mod tests {
         let grid = read_csv_grid(file.path()).unwrap();
         assert_eq!(
             grid,
-            vec![
-                vec![Some("a".into()), None, Some("c".into())],
-                vec![Some("1".into()), Some("2".into()), None],
-            ]
+            vec![vec![Some("a".into()), None, Some("c".into())], vec![Some("1".into()), Some("2".into()), None],]
         );
     }
 }

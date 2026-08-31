@@ -33,13 +33,7 @@ pub fn pca_first_two(data: &Array2<f64>) -> PcaResult {
 
     let pc1: Vec<f64> = (0..n_samples).map(|s| u[(s, 0)] * singular_values[0]).collect();
     let pc2: Vec<f64> = (0..n_samples)
-        .map(|s| {
-            if singular_values.len() > 1 {
-                u[(s, 1)] * singular_values[1]
-            } else {
-                0.0
-            }
-        })
+        .map(|s| if singular_values.len() > 1 { u[(s, 1)] * singular_values[1] } else { 0.0 })
         .collect();
 
     PcaResult { pc1, pc2 }
@@ -53,10 +47,7 @@ mod tests {
     #[test]
     fn separates_two_clusters_along_the_first_component() {
         // 2 features (rows), 6 samples (cols): first 3 samples cluster near (0,0), last 3 near (10,10)
-        let data = array![
-            [0.0, 0.1, -0.1, 10.0, 10.1, 9.9],
-            [0.0, -0.1, 0.1, 10.0, 9.9, 10.1],
-        ];
+        let data = array![[0.0, 0.1, -0.1, 10.0, 10.1, 9.9], [0.0, -0.1, 0.1, 10.0, 9.9, 10.1],];
         let result = pca_first_two(&data);
         let cluster_a_mean = result.pc1[0..3].iter().sum::<f64>() / 3.0;
         let cluster_b_mean = result.pc1[3..6].iter().sum::<f64>() / 3.0;
