@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchJobResult, subscribeToJobEvents, uploadDataset } from "../lib/api";
 import type { JobEvent, ResultJson } from "../lib/types";
 
@@ -14,11 +14,19 @@ export type JobState =
 export function useJob() {
   const [state, setState] = useState<JobState>({ phase: "idle" });
   const unsubscribeRef = useRef<(() => void) | null>(null);
+  const activeJobIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      unsubscribeRef.current?.();
+    };
+  }, []);
 
   const submit = useCallback((file: File) => {
     setState({ phase: "uploading" });
     uploadDataset(file)
       .then(({ jobId }) => {
+        activeJobIdRef.current = jobId;
         setState({ phase: "processing", jobId });
         unsubscribeRef.current = subscribeToJobEvents(jobId, (event: JobEvent) => {
           if (event.status === "progress") {
@@ -26,8 +34,16 @@ export function useJob() {
           } else if (event.status === "completed") {
             unsubscribeRef.current?.();
             fetchJobResult(jobId)
-              .then((result) => setState({ phase: "done", jobId, result }))
-              .catch((error: Error) => setState({ phase: "error", message: error.message }));
+              .then((result) => {
+                if (activeJobIdRef.current === jobId) {
+                  setState({ phase: "done", jobId, result });
+                }
+              })
+              .catch((error: Error) => {
+                if (activeJobIdRef.current === jobId) {
+                  setState({ phase: "error", message: error.message });
+                }
+              });
           } else if (event.status === "failed") {
             unsubscribeRef.current?.();
             setState({ phase: "error", message: event.error });
@@ -40,6 +56,7 @@ export function useJob() {
   const reset = useCallback(() => {
     unsubscribeRef.current?.();
     unsubscribeRef.current = null;
+    activeJobIdRef.current = null;
     setState({ phase: "idle" });
   }, []);
 

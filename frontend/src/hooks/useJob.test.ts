@@ -89,4 +89,38 @@ describe("useJob", () => {
 
     expect(result.current.state).toEqual({ phase: "idle" });
   });
+
+  it("does not clobber idle state when reset() is called before a pending fetchJobResult resolves", async () => {
+    let emit: (event: JobEvent) => void = () => {};
+    let resolveFetch: (result: ResultJson) => void = () => {};
+    vi.mocked(api.uploadDataset).mockResolvedValue({ jobId: "job-1" });
+    vi.mocked(api.subscribeToJobEvents).mockImplementation((_jobId, onEvent) => {
+      emit = onEvent;
+      return () => {};
+    });
+    vi.mocked(api.fetchJobResult).mockImplementation(
+      () =>
+        new Promise<ResultJson>((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+
+    const { result } = renderHook(() => useJob());
+    await act(async () => result.current.submit(new File(["x"], "dataset.csv")));
+    await waitFor(() => expect(result.current.state.phase).toBe("processing"));
+
+    // "completed" kicks off fetchJobResult, which we deliberately leave pending.
+    await act(async () => emit({ status: "completed" }));
+
+    // User navigates away / starts over before the fetch resolves.
+    act(() => result.current.reset());
+    expect(result.current.state).toEqual({ phase: "idle" });
+
+    // The orphaned fetch now resolves — it must NOT clobber the reset state.
+    await act(async () => {
+      resolveFetch(resultFixture);
+    });
+
+    expect(result.current.state).toEqual({ phase: "idle" });
+  });
 });
