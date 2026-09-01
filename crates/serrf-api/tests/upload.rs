@@ -122,7 +122,10 @@ async fn result_for_an_unknown_job_returns_404() {
 async fn result_pca_includes_sample_type_and_batch_per_point() {
     let base_url = spawn_app().await;
     let client = reqwest::Client::new();
-    let part = reqwest::multipart::Part::text(valid_csv_fixture()).file_name("dataset.csv").mime_str("text/csv").unwrap();
+    let part = reqwest::multipart::Part::text(valid_csv_fixture())
+        .file_name("dataset.csv")
+        .mime_str("text/csv")
+        .unwrap();
     let form = reqwest::multipart::Form::new().part("file", part);
     let response = client.post(format!("{base_url}/api/jobs")).multipart(form).send().await.unwrap();
     let body: serde_json::Value = response.json().await.unwrap();
