@@ -10,7 +10,7 @@ pub fn lookup(path: &str) -> Option<(Cow<'static, [u8]>, &'static str)> {
 }
 
 fn lookup_in<E: RustEmbed>(path: &str) -> Option<(Cow<'static, [u8]>, &'static str)> {
-    let resolved = if path.is_empty() || !path.contains('.') {
+    let resolved = if path.is_empty() {
         "index.html"
     } else {
         path
