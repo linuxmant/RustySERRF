@@ -5,3 +5,4 @@
 .omc/
 /target
 .dev.pid
+/dist
