@@ -39,6 +39,7 @@ pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> 
     let jobs = state.jobs.clone();
     let compound_labels = dataset.compounds.label.clone();
     let sample_type = samples.sample_type.clone();
+    let batch = samples.batch.clone();
 
     let handle = tokio::task::spawn_blocking(move || {
         let progress_jobs = jobs.clone();
@@ -58,6 +59,7 @@ pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> 
                 crate::job::CompletedJob {
                     compound_labels,
                     sample_type,
+                    batch,
                     output,
                 },
             ),

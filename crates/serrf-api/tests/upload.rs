@@ -117,3 +117,30 @@ async fn result_for_an_unknown_job_returns_404() {
 
     assert_eq!(response.status(), 404);
 }
+
+#[tokio::test]
+async fn result_pca_includes_sample_type_and_batch_per_point() {
+    let base_url = spawn_app().await;
+    let client = reqwest::Client::new();
+    let part = reqwest::multipart::Part::text(valid_csv_fixture()).file_name("dataset.csv").mime_str("text/csv").unwrap();
+    let form = reqwest::multipart::Form::new().part("file", part);
+    let response = client.post(format!("{base_url}/api/jobs")).multipart(form).send().await.unwrap();
+    let body: serde_json::Value = response.json().await.unwrap();
+    let job_id = body["job_id"].as_str().unwrap().to_string();
+
+    let result = loop {
+        let response = client.get(format!("{base_url}/api/jobs/{job_id}/result")).send().await.unwrap();
+        if response.status() != 425 {
+            assert_eq!(response.status(), 200);
+            break response.json::<serde_json::Value>().await.unwrap();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+
+    let pca_before = &result["pca_before"];
+    let n_points = pca_before["pc1"].as_array().unwrap().len();
+    assert_eq!(pca_before["sample_type"].as_array().unwrap().len(), n_points);
+    assert_eq!(pca_before["batch"].as_array().unwrap().len(), n_points);
+    assert!(pca_before["batch"].as_array().unwrap().iter().any(|b| b == "A"));
+    assert!(pca_before["batch"].as_array().unwrap().iter().any(|b| b == "B"));
+}

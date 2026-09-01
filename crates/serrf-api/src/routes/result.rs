@@ -8,6 +8,8 @@ use axum::Json;
 pub struct PcaJson {
     pc1: Vec<f64>,
     pc2: Vec<f64>,
+    sample_type: Vec<Option<String>>,
+    batch: Vec<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -45,10 +47,14 @@ pub async fn result(State(state): State<AppState>, Path(id): Path<String>) -> Re
                 pca_before: PcaJson {
                     pc1: pca_before.pc1,
                     pc2: pca_before.pc2,
+                    sample_type: completed.sample_type.clone(),
+                    batch: completed.batch.clone(),
                 },
                 pca_after: PcaJson {
                     pc1: pca_after.pc1,
                     pc2: pca_after.pc2,
+                    sample_type: completed.sample_type.clone(),
+                    batch: completed.batch.clone(),
                 },
             }
         })

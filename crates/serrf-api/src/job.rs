@@ -44,6 +44,7 @@ impl JobEvent {
 pub struct CompletedJob {
     pub compound_labels: Vec<String>,
     pub sample_type: Vec<Option<String>>,
+    pub batch: Vec<String>,
     pub output: serrf_core::PipelineOutput,
 }
 
@@ -139,6 +140,7 @@ mod tests {
         CompletedJob {
             compound_labels: vec!["c1".to_string()],
             sample_type: vec![Some("qc".to_string())],
+            batch: vec!["A".to_string()],
             output: serrf_core::PipelineOutput {
                 raw: ndarray::Array2::zeros((1, 1)),
                 serrf: ndarray::Array2::zeros((1, 1)),
