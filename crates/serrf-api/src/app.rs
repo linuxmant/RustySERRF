@@ -34,9 +34,7 @@ async fn static_fallback(uri: axum::http::Uri) -> axum::response::Response {
 
     let path = uri.path().trim_start_matches('/');
     match crate::static_assets::lookup(path) {
-        Some((bytes, mime)) => {
-            ([(axum::http::header::CONTENT_TYPE, mime)], bytes.into_owned()).into_response()
-        }
+        Some((bytes, mime)) => ([(axum::http::header::CONTENT_TYPE, mime)], bytes.into_owned()).into_response(),
         None => (axum::http::StatusCode::NOT_FOUND, "not found").into_response(),
     }
 }

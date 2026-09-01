@@ -10,11 +10,7 @@ pub fn lookup(path: &str) -> Option<(Cow<'static, [u8]>, &'static str)> {
 }
 
 fn lookup_in<E: RustEmbed>(path: &str) -> Option<(Cow<'static, [u8]>, &'static str)> {
-    let resolved = if path.is_empty() {
-        "index.html"
-    } else {
-        path
-    };
+    let resolved = if path.is_empty() { "index.html" } else { path };
     let file = E::get(resolved)?;
     Some((file.data, mime_for(resolved)))
 }
