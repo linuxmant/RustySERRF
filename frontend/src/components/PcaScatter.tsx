@@ -6,14 +6,22 @@ interface PcaScatterProps {
   pc1: number[];
   pc2: number[];
   sampleType: (string | null)[];
+  batch?: string[];
   title: string;
 }
 
-export default function PcaScatter({ pc1, pc2, sampleType, title }: PcaScatterProps) {
-  const groups = Array.from(new Set(sampleType.map((type) => type ?? "unknown")));
+export default function PcaScatter({ pc1, pc2, sampleType, batch, title }: PcaScatterProps) {
+  const showBatch = batch !== undefined && new Set(batch).size > 1;
+
+  const groupLabel = (index: number): string => {
+    const type = sampleType[index] ?? "unknown";
+    return showBatch && batch ? `${type} (${batch[index]})` : type;
+  };
+
+  const groups = Array.from(new Set(sampleType.map((_, index) => groupLabel(index))));
   const series = groups.map((group) => {
     const indices = sampleType
-      .map((type, index) => ((type ?? "unknown") === group ? index : -1))
+      .map((_, index) => (groupLabel(index) === group ? index : -1))
       .filter((index) => index !== -1);
     return {
       label: group,

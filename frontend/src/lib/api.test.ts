@@ -3,8 +3,11 @@ import { ApiError, downloadUrl, fetchJobResult, fetchJobStatus, subscribeToJobEv
 
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
+  static readonly CLOSED = 2;
   listeners: Record<string, ((event: MessageEvent) => void)[]> = {};
   closed = false;
+  readyState = 0;
+  onerror: (() => void) | null = null;
 
   constructor(public url: string) {
     FakeEventSource.instances.push(this);
@@ -22,6 +25,10 @@ class FakeEventSource {
     for (const listener of this.listeners[type] ?? []) {
       listener({ data: JSON.stringify(data) } as MessageEvent);
     }
+  }
+
+  triggerError() {
+    this.onerror?.();
   }
 
   close() {
@@ -78,6 +85,53 @@ describe("subscribeToJobEvents", () => {
 
     unsubscribe();
     expect(source.closed).toBe(true);
+  });
+
+  it("on a permanent error, resolves via fetchJobStatus and emits the completed status", async () => {
+    const events: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: "completed" }) })
+    );
+    subscribeToJobEvents("job-1", (event) => events.push(event));
+
+    const source = FakeEventSource.instances[0];
+    source.readyState = FakeEventSource.CLOSED;
+    source.triggerError();
+
+    await vi.waitFor(() => {
+      expect(events).toEqual([{ status: "completed" }]);
+    });
+  });
+
+  it("on a permanent error, emits a connection-lost failure when the status fetch rejects", async () => {
+    const events: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+    subscribeToJobEvents("job-1", (event) => events.push(event));
+
+    const source = FakeEventSource.instances[0];
+    source.readyState = FakeEventSource.CLOSED;
+    source.triggerError();
+
+    await vi.waitFor(() => {
+      expect(events).toEqual([
+        { status: "failed", error: "Lost connection to the server and could not confirm job status." },
+      ]);
+    });
+  });
+
+  it("ignores a transient error where readyState is not CLOSED", async () => {
+    const events: unknown[] = [];
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    subscribeToJobEvents("job-1", (event) => events.push(event));
+
+    const source = FakeEventSource.instances[0];
+    source.readyState = 0;
+    source.triggerError();
+
+    expect(events).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

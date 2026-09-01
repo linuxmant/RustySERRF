@@ -13,10 +13,10 @@ export interface PcaJson {
 
 export interface ResultJson {
   compound_labels: string[];
-  qc_rsd_raw: number[];
-  qc_rsd_serrf: number[];
-  validate_rsd_raw: Record<string, number[]>;
-  validate_rsd_serrf: Record<string, number[]>;
+  qc_rsd_raw: (number | null)[];
+  qc_rsd_serrf: (number | null)[];
+  validate_rsd_raw: Record<string, (number | null)[]>;
+  validate_rsd_serrf: Record<string, (number | null)[]>;
   pca_before: PcaJson;
   pca_after: PcaJson;
 }

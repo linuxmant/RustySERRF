@@ -9,7 +9,7 @@ test("upload a dataset, watch progress, view results, download, and toggle theme
     .setInputFiles(path.resolve(__dirname, "../tests/fixtures/example-dataset.csv"));
   await page.getByRole("button", { name: "Run SERRF normalization" }).click();
 
-  await expect(page.getByRole("heading", { name: "Results" })).toBeVisible({ timeout: 300_000 });
+  await expect(page.getByRole("heading", { name: "Results" })).toBeVisible({ timeout: 60_000 });
   await expect(page.locator("svg").first()).toBeVisible();
 
   const downloadPromise = page.waitForEvent("download");

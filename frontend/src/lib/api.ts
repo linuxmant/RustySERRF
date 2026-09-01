@@ -44,6 +44,23 @@ export function subscribeToJobEvents(jobId: string, onEvent: (event: JobEvent) =
     return { status, listener };
   });
 
+  source.onerror = () => {
+    if (source.readyState !== EventSource.CLOSED) {
+      return;
+    }
+    fetchJobStatus(jobId)
+      .then((status) => {
+        if (status.status === "completed" || status.status === "failed") {
+          onEvent(status);
+        } else {
+          onEvent({ status: "failed", error: "Lost connection to the server while the job was still running." });
+        }
+      })
+      .catch(() => {
+        onEvent({ status: "failed", error: "Lost connection to the server and could not confirm job status." });
+      });
+  };
+
   return () => {
     registered.forEach(({ status, listener }) => source.removeEventListener(status, listener as EventListener));
     source.close();

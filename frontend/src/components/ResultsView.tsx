@@ -13,8 +13,9 @@ interface ResultsViewProps {
   onReset: () => void;
 }
 
-function median(values: number[]): number {
-  const sorted = [...values].filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+function median(values: (number | null)[]): number {
+  const finite = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const sorted = [...finite].sort((a, b) => a - b);
   return sorted.length === 0 ? 0 : sorted[Math.floor(sorted.length / 2)];
 }
 
@@ -42,6 +43,7 @@ export default function ResultsView({ jobId, result, onReset }: ResultsViewProps
             pc1={result.pca_before.pc1}
             pc2={result.pca_before.pc2}
             sampleType={result.pca_before.sample_type}
+            batch={result.pca_before.batch}
           />
         </Grid>
         <Grid item xs={12} md={6}>
@@ -50,6 +52,7 @@ export default function ResultsView({ jobId, result, onReset }: ResultsViewProps
             pc1={result.pca_after.pc1}
             pc2={result.pca_after.pc2}
             sampleType={result.pca_after.sample_type}
+            batch={result.pca_after.batch}
           />
         </Grid>
       </Grid>

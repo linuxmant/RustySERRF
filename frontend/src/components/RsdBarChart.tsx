@@ -2,8 +2,8 @@ import { BarChart } from "@mui/x-charts/BarChart";
 
 interface RsdBarChartProps {
   compoundLabels: string[];
-  qcRsdRaw: number[];
-  qcRsdSerrf: number[];
+  qcRsdRaw: (number | null)[];
+  qcRsdSerrf: (number | null)[];
 }
 
 export default function RsdBarChart({ compoundLabels, qcRsdRaw, qcRsdSerrf }: RsdBarChartProps) {

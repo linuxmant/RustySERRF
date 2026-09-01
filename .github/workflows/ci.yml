@@ -81,6 +81,10 @@ jobs:
       - working-directory: frontend
         run: npm ci
 
+      - name: Run frontend integration test against a real serrf-api
+        working-directory: frontend
+        run: npm run test:integration
+
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
