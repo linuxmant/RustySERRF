@@ -13,7 +13,7 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
     },
     {
-      command: "npm run build && npm run start",
+      command: "npm run build && npm run dev",
       port: 3000,
       timeout: 180_000,
       reuseExistingServer: !process.env.CI,

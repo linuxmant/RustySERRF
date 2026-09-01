@@ -18,6 +18,10 @@ pub fn build_app() -> axum::Router {
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(state);
 
+    // Note: `Router::layer` only wraps routes/fallback already registered at the time it's
+    // called, so the CORS/body-limit layers above do NOT cover a fallback registered afterward.
+    // Verified against axum's routing internals — don't assume the static fallback below is
+    // covered by them (e.g. don't add a body-consuming fallback here expecting the 10MB limit).
     #[cfg(feature = "bundled-frontend")]
     let router = router.fallback(static_fallback);
 

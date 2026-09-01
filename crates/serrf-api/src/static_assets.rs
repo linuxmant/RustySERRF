@@ -20,6 +20,7 @@ fn mime_for(path: &str) -> &'static str {
         Some("html") => "text/html",
         Some("js") => "text/javascript",
         Some("css") => "text/css",
+        Some("txt") => "text/plain",
         Some("json") | Some("map") => "application/json",
         Some("png") => "image/png",
         Some("jpg") | Some("jpeg") => "image/jpeg",

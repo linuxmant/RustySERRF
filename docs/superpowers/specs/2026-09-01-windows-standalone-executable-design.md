@@ -54,10 +54,11 @@ When `bundled-frontend` is enabled:
   woff2/map, default `application/octet-stream`; no extra dependency needed for the handful of
   static-export file types) generic over any `RustEmbed` type, plus a thin
   `pub fn lookup(path: &str) -> ...` wrapper bound to the real `static-dist/`-backed type. `path` of
-  `""` or a path with no extension resolves to `index.html` (this is a single-route static export —
-  no client-side-routing fallback logic is needed since there is exactly one route, `/`). The
-  generic form lets tests exercise the same logic against a small, permanent test fixture directory
-  instead of depending on `static-dist/`'s placeholder-vs-real-export state.
+  `""` resolves to `index.html`; any other unmatched path 404s (this is a single-route static
+  export, so no client-side-routing fallback is needed). Note: the day the frontend gains a second
+  real route, deep links to non-existent-but-should-exist paths would need a client-side-routing
+  fallback added. The generic form lets tests exercise the same logic against a small, permanent
+  test fixture directory instead of depending on `static-dist/`'s placeholder-vs-real-export state.
 - `crates/serrf-api/src/app.rs`'s `build_app()` adds one fallback handler, gated by
   `#[cfg(feature = "bundled-frontend")]`, that calls `static_assets::lookup` for any path not
   matched by the existing `/health`/`/api/*` routes and returns 404 if `lookup` returns `None`.
