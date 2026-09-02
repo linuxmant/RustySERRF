@@ -17,9 +17,11 @@ The port is being built in four stages:
    PCA, PNG reporting) plus a CLI binary that runs it end-to-end against a local file. Validated
    against the original R output (statistical equivalence, not bit-for-bit — no two random forest
    implementations produce identical trees).
-2. **`serrf-api`** — in progress. An axum HTTP server wrapping `serrf-core` behind an async job
+2. **`serrf-api`** — done. An axum HTTP server wrapping `serrf-core` behind an async job
    API (upload → progress via SSE → JSON results → CSV/PNG zip download).
-3. **Frontend** — not started. A Next.js/MUI UI replacing the Shiny interface.
+3. **Frontend** — done. A Next.js/MUI UI replacing the Shiny interface, statically exported
+   (`output: "export"`) and served either via `next dev` in development or embedded directly into
+   `serrf-api` for the standalone Windows executable (see below).
 4. **Docker** — not started. A single-image deployment bundling the API and frontend.
 
 Design details live in [`docs/superpowers/specs/2026-08-20-rust-nextjs-port-design.md`](docs/superpowers/specs/2026-08-20-rust-nextjs-port-design.md).
@@ -57,6 +59,38 @@ until the Rust port reaches full parity.
 **Locally:** open `app.R` in RStudio and click **Run App**, then **Open in Browser**.
 
 **Online:** https://slfan.shinyapps.io/ShinySERRF/
+
+## Building the standalone Windows executable
+
+`serrf-api` can be built as a single portable `serrf-api-windows.exe` with the Next.js frontend
+embedded, so a non-technical Windows user can double-click it — no Docker, Rust, or Node required
+on their machine.
+
+**Prerequisites (on the build machine, not the end user's):**
+
+- Docker
+- [`cross`](https://github.com/cross-rs/cross), installed via
+  `cargo install cross --git https://github.com/cross-rs/cross`
+- Node/npm (for the frontend's static export step)
+
+**Build it:**
+
+```bash
+./scripts/build-windows-release.sh
+```
+
+This produces `dist/serrf-api-windows.exe` (~11 MB). `dist/` is gitignored — the `.exe` is a build
+artifact, not something committed to the repo.
+
+**A few things worth knowing before handing this to someone:**
+
+1. It must be a `--release` build (already what the script does). `rust-embed` only truly embeds
+   assets at compile time in release mode — a debug build instead reads `static-dist/` from disk
+   at runtime and would not be portable to another machine.
+2. The `.exe` is a console app: the black terminal window that opens *is* the running app.
+   Closing that window stops the server.
+3. The binary is unsigned, so Windows SmartScreen will show a "Windows protected your PC" warning
+   the first time it's run. Code-signing is out of scope for this project.
 
 ## Input file format
 
