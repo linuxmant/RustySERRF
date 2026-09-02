@@ -118,9 +118,15 @@ pub fn normalize(
     progress(Progress {
         stage: "cross-validation".into(),
         current: 0,
-        total: 1,
+        total: config.cv_folds * working.nrows(),
     });
-    let qc_rsd_serrf_finite = cross_validate_qc(&qc_matrix, &qc_batch, config.cv_folds, config.seed, config.num_vars);
+    let qc_rsd_serrf_finite = cross_validate_qc(&qc_matrix, &qc_batch, config.cv_folds, config.seed, config.num_vars, |current, total| {
+        progress(Progress {
+            stage: "cross-validation".into(),
+            current,
+            total,
+        })
+    });
 
     let mut validate_rsd_raw_finite = HashMap::new();
     let mut validate_rsd_serrf_finite = HashMap::new();
@@ -186,6 +192,22 @@ pub fn normalize(
         for c in 0..n_samples {
             raw[[orig_i, c]] = working[[working_i, c]];
             serrf[[orig_i, c]] = serrf_working[[working_i, c]];
+        }
+    }
+
+    // app.R lines 1130-1131: the final output reports the *original* raw value's zero/missing-ness
+    // regardless of what the (necessarily imputed, for computation) pipeline produced for that
+    // cell — a blank input cell means "don't report a value here", not "impute and report one".
+    for i in 0..n_compounds_total {
+        for c in 0..n_samples {
+            let original = dataset.values[[i, c]];
+            if original == 0.0 {
+                raw[[i, c]] = 0.0;
+                serrf[[i, c]] = 0.0;
+            } else if original.is_nan() {
+                raw[[i, c]] = f64::NAN;
+                serrf[[i, c]] = f64::NAN;
+            }
         }
     }
 
@@ -331,6 +353,52 @@ mod tests {
             assert!(output.serrf.row(i).iter().all(|v| v.is_finite()), "row {i} should normalize normally");
             assert!(output.qc_rsd_raw[i].is_finite());
             assert!(output.qc_rsd_serrf[i].is_finite());
+        }
+    }
+
+    /// app.R lines 1130-1131 force the final output back to the *original* raw value's
+    /// zero/missing-ness after normalization: `normalized_dataset[[i]][data$e_matrix==0] = 0` and
+    /// `normalized_dataset[[i]][is.na(data$e_matrix)] = NA`. The imputed/computed value is only
+    /// ever a computational necessity (SERRF can't train on a hole in the data) — it was never
+    /// meant to be reported back to the user, matching the documented input format note that a
+    /// blank cell means "don't normalize/report this value". Comparing against real R output
+    /// showed the Rust port reporting a computed value here instead of leaving it blank/zero.
+    #[test]
+    fn reinstates_original_zero_and_missing_cells_in_the_final_output() {
+        let (mut dataset, samples) = synthetic_dataset();
+        // A missing cell and a zero cell, each in an otherwise-normal, non-stripped compound row.
+        dataset.values[[0, 3]] = f64::NAN;
+        dataset.values[[1, 5]] = 0.0;
+        let config = SerrfConfig {
+            num_vars: 3,
+            seed: 1,
+            cv_folds: 3,
+        };
+        let output = normalize(&dataset, &samples, &config, |_| {}).unwrap();
+
+        assert!(
+            output.raw[[0, 3]].is_nan(),
+            "raw output must report the originally-missing cell as missing, not an imputed value"
+        );
+        assert!(
+            output.serrf[[0, 3]].is_nan(),
+            "serrf output must report the originally-missing cell as missing, not a normalized value"
+        );
+        assert_eq!(output.raw[[1, 5]], 0.0, "raw output must keep the originally-zero cell as exactly zero");
+        assert_eq!(
+            output.serrf[[1, 5]],
+            0.0,
+            "serrf output must keep the originally-zero cell as exactly zero, not a normalized value"
+        );
+
+        // every other cell in those two rows still normalizes normally
+        for c in 0..dataset.values.ncols() {
+            if c != 3 {
+                assert!(output.raw[[0, c]].is_finite() && output.serrf[[0, c]].is_finite());
+            }
+            if c != 5 {
+                assert!(output.raw[[1, c]].is_finite() && output.serrf[[1, c]].is_finite());
+            }
         }
     }
 

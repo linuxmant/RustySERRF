@@ -5,9 +5,17 @@ use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
-pub fn cross_validate_qc(qc: &Array2<f64>, qc_batch: &[String], folds: usize, seed: u64, num_vars: usize) -> Vec<f64> {
+pub fn cross_validate_qc(
+    qc: &Array2<f64>,
+    qc_batch: &[String],
+    folds: usize,
+    seed: u64,
+    num_vars: usize,
+    mut progress: impl FnMut(usize, usize) + Send,
+) -> Vec<f64> {
     let n_compounds = qc.nrows();
     let n = qc.ncols();
+    let total = folds * n_compounds;
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let mut fold_rsds: Vec<Vec<f64>> = Vec::new();
 
@@ -39,7 +47,8 @@ pub fn cross_validate_qc(qc: &Array2<f64>, qc_batch: &[String], folds: usize, se
             target_batch: &target_batch,
             num_vars,
         };
-        let output = serrf_normalize_group(&input, seed + fold as u64, |_, _| {});
+        let fold_offset = fold * n_compounds;
+        let output = serrf_normalize_group(&input, seed + fold as u64, |current, _fold_total| progress(fold_offset + current, total));
 
         let compound_rsds: Vec<f64> = (0..n_compounds).map(|i| rsd(&output.normed_target.row(i).to_vec())).collect();
         fold_rsds.push(compound_rsds);
@@ -75,8 +84,39 @@ mod tests {
                 qc[[i, j]] = 100.0 + (j as f64 % 5.0);
             }
         }
-        let result = cross_validate_qc(&qc, &qc_batch, 5, 1, 3);
+        let result = cross_validate_qc(&qc, &qc_batch, 5, 1, 3, |_, _| {});
         assert_eq!(result.len(), n_compounds);
         assert!(result.iter().all(|v| v.is_finite() && *v >= 0.0));
+    }
+
+    #[test]
+    fn reports_progress_across_every_fold_not_just_once() {
+        // Before this fix, cross-validation reported no progress at all during its 5 folds of
+        // work (the pipeline fired a single "0/1" event before calling this function and never
+        // updated it), so the frontend's progress bar sat frozen for however long cross-
+        // validation took. `total` should reflect all folds' worth of per-compound work, and
+        // `current` should climb across the whole run, not just within a single fold.
+        let n_compounds = 4;
+        let n_qc = 20;
+        let mut qc = Array2::<f64>::zeros((n_compounds, n_qc));
+        let mut qc_batch = Vec::new();
+        for j in 0..n_qc {
+            let batch = if j % 2 == 0 { "A" } else { "B" };
+            qc_batch.push(batch.to_string());
+            for i in 0..n_compounds {
+                qc[[i, j]] = 100.0 + (j as f64 % 5.0);
+            }
+        }
+        let folds = 5;
+        let mut totals_seen = std::collections::HashSet::new();
+        let mut max_current = 0usize;
+        cross_validate_qc(&qc, &qc_batch, folds, 1, 3, |current, total| {
+            totals_seen.insert(total);
+            max_current = max_current.max(current);
+        });
+
+        // `total` is constant across every call (folds * n_compounds), and progress reaches it.
+        assert_eq!(totals_seen, std::collections::HashSet::from([folds * n_compounds]));
+        assert_eq!(max_current, folds * n_compounds, "progress should reach every fold's work, not just the first");
     }
 }
