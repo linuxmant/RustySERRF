@@ -139,12 +139,17 @@ fn compute_compound_row(
     let mut rng = ChaCha8Rng::seed_from_u64(derive_row_seed(seed, j));
     let mut row_normalized = vec![0.0; all.ncols()];
 
-    // whole-group (all batches) QC mean and target median for compound j, matching
-    // serrfR's `mean(all[j,sampleType.=='qc'])` (line 571) and
-    // `median(all[j,!sampleType.=='qc'])` (line 576) rescale denominators.
+    // whole-group (all batches) QC mean/median and target median for compound j, matching
+    // serrfR's `mean(all[j,sampleType.=='qc'])` (line 571), `median(all[j,sampleType.=='qc'])`
+    // (line 594's rescale target), and `median(all[j,!sampleType.=='qc'])` (lines 576/597/606's
+    // rescale target and outlier-swap `attempt` term).
     let all_qc_indices: Vec<usize> = (0..all.ncols()).filter(|&c| is_qc[c]).collect();
     let all_target_indices: Vec<usize> = (0..all.ncols()).filter(|&c| !is_qc[c]).collect();
     let overall_qc_mean = all_qc_indices.iter().map(|&c| all[[j, c]]).sum::<f64>() / all_qc_indices.len() as f64;
+    let overall_qc_median = {
+        let mut vals: Vec<f64> = all_qc_indices.iter().map(|&c| all[[j, c]]).collect();
+        median(&mut vals)
+    };
     let overall_target_median = {
         let mut vals: Vec<f64> = all_target_indices.iter().map(|&c| all[[j, c]]).collect();
         median(&mut vals)
@@ -156,6 +161,11 @@ fn compute_compound_row(
         let target_cols: Vec<usize> = batch_cols.iter().copied().filter(|&c| !is_qc[c]).collect();
 
         let selected = select_variables(&corr_train[b], &corr_target[b], j, num_vars);
+        // Stashed only when the RF branch below runs, so the outlier-swap after the non-finite
+        // fix (which needs the same predictions/target_mean the main correction used) knows
+        // whether to run for this batch at all — R's outlier swap (604-617) is unreachable from
+        // the raw-passthrough branch (534-536), just like the per-batch rescale below.
+        let mut swap_inputs: Option<(Vec<f64>, f64)> = None;
         if selected.is_empty() {
             for &c in &batch_cols {
                 row_normalized[c] = all[[j, c]];
@@ -205,12 +215,19 @@ fn compute_compound_row(
                 row_normalized[c] = if ratio.abs() < 1e-9 { all[[j, c]] } else { all[[j, c]] / ratio };
             }
 
-            // negative-value fix: fall back to the raw value (serrfR line 588/622)
+            // negative-value fix: fall back to the raw value (serrfR line 588)
             for &c in &target_cols {
                 if row_normalized[c] < 0.0 {
                     row_normalized[c] = all[[j, c]];
                 }
             }
+
+            // per-batch median rescale (serrfR lines 594/597): each batch's own QC/target median
+            // independently gets forced to match the whole-group raw median.
+            rescale_batch_to_overall_median(&mut row_normalized, &qc_cols, overall_qc_median);
+            rescale_batch_to_overall_median(&mut row_normalized, &target_cols, overall_target_median);
+
+            swap_inputs = Some((predictions, target_mean));
         }
 
         // fix non-finite values within this batch, mirroring app.R:600's
@@ -241,29 +258,95 @@ fn compute_compound_row(
                 }
             }
         }
+
+        // outlier swap (serrfR lines 605-617), run after the non-finite fix like in app.R.
+        // Only reachable for batches that took the RF branch above (raw-passthrough batches have
+        // no `predictions`/`target_mean` to build an alternative correction from, matching R
+        // where this code is unreachable from the `ncol(train_data)==1` early-return branch).
+        if let Some((predictions, target_mean)) = swap_inputs {
+            outlier_swap(
+                &mut row_normalized,
+                &batch_cols,
+                &target_cols,
+                &all.row(j).to_vec(),
+                &predictions,
+                target_mean,
+                overall_target_median,
+            );
+            // negative-value re-fix, post-swap (serrfR line 622)
+            for &c in &target_cols {
+                if row_normalized[c] < 0.0 {
+                    row_normalized[c] = all[[j, c]];
+                }
+            }
+        }
     }
 
-    // final rescale of QC and non-QC groups to the original overall medians (serrfR lines 594-597)
-    rescale_to_median(&mut row_normalized, &all_qc_indices, &all.row(j).to_vec());
-    rescale_to_median(&mut row_normalized, &all_target_indices, &all.row(j).to_vec());
-
-    // post-hoc QC rescale ("c factor", serrfR lines 656-658), run after the median rescale
-    // above like in app.R. The boxplot.stats outlier swap (app.R lines 604-617) between
-    // those two steps is deliberately not ported (Task 12's brief excluded it by name).
+    // post-hoc QC rescale ("c factor", serrfR lines 656-658), run after the per-batch rescale
+    // and outlier swap above like in app.R.
     apply_c_factor(&mut row_normalized, &all_qc_indices, &all_target_indices, &all.row(j).to_vec());
 
     row_normalized
 }
 
-fn rescale_to_median(row: &mut [f64], indices: &[usize], original: &[f64]) {
-    let mut normed_vals: Vec<f64> = indices.iter().map(|&i| row[i]).collect();
-    let mut orig_vals: Vec<f64> = indices.iter().map(|&i| original[i]).collect();
-    let normed_median = median(&mut normed_vals);
-    let orig_median = median(&mut orig_vals);
-    if normed_median.abs() > 1e-9 {
-        let factor = orig_median / normed_median;
-        for &i in indices {
+/// Per-batch median rescale (app.R lines 594-597): forces `batch_indices`' own median (within
+/// `row`) to match `overall_orig_median` — the raw median computed across *all* batches for this
+/// compound, not this batch's raw median. R runs this once per batch, independently aligning each
+/// batch's median to the same overall target; a single whole-group rescale done once after every
+/// batch is not equivalent whenever there's more than one batch.
+fn rescale_batch_to_overall_median(row: &mut [f64], batch_indices: &[usize], overall_orig_median: f64) {
+    if batch_indices.is_empty() {
+        return;
+    }
+    let mut batch_vals: Vec<f64> = batch_indices.iter().map(|&i| row[i]).collect();
+    let batch_median = median(&mut batch_vals);
+    if batch_median.abs() > 1e-9 {
+        let factor = overall_orig_median / batch_median;
+        for &i in batch_indices {
             row[i] *= factor;
+        }
+    }
+}
+
+/// Per-batch outlier swap (app.R lines 604-617), run after the per-batch median rescale and the
+/// non-finite-value rescue. Detects outliers (`coef = 3`, wider than RSD's default 1.5) across
+/// the *whole batch* (QC and target together) and, for any target-side value that landed in that
+/// outlier set, computes an alternative "minus"-style correction (`attempt`) from the same RF
+/// prediction the main "divide"-style correction used. The alternative is only substituted in if
+/// doing so would move the outlier's mean closer to the rest of the batch — R's own comment notes
+/// "this may not help deal with outlier effect", i.e. this is a heuristic, not a guarantee.
+fn outlier_swap(row: &mut [f64], batch_cols: &[usize], target_cols: &[usize], raw: &[f64], predictions: &[f64], target_mean: f64, overall_target_median: f64) {
+    let batch_norm: Vec<f64> = batch_cols.iter().map(|&c| row[c]).collect();
+    if batch_norm.is_empty() {
+        return;
+    }
+    let batch_mean = batch_norm.iter().sum::<f64>() / batch_norm.len() as f64;
+    let out = crate::rsd::outlier_values(&batch_norm, 3.0);
+    if out.is_empty() {
+        return;
+    }
+    let out_mean = out.iter().sum::<f64>() / out.len() as f64;
+
+    let mut attempts: Vec<(usize, f64)> = Vec::new();
+    for (idx, &c) in target_cols.iter().enumerate() {
+        if out.contains(&row[c]) {
+            let attempt = raw[c] - (predictions[idx] + target_mean - overall_target_median);
+            attempts.push((c, attempt));
+        }
+    }
+    if attempts.is_empty() {
+        return;
+    }
+    let attempt_mean = attempts.iter().map(|(_, v)| v).sum::<f64>() / attempts.len() as f64;
+
+    let should_swap = if out_mean > batch_mean {
+        attempt_mean < out_mean
+    } else {
+        attempt_mean > out_mean
+    };
+    if should_swap {
+        for (c, v) in attempts {
+            row[c] = v;
         }
     }
 }
@@ -622,6 +705,84 @@ mod tests {
 
         assert_eq!(output.normed_train.row(0).to_vec(), vec![10.0, 20.0, 30.0, 40.0]);
         assert_eq!(output.normed_target.row(0).to_vec(), vec![100.0, 200.0, 300.0]);
+    }
+
+    // Per-batch median rescale (app.R lines 594-597) and outlier-swap (app.R lines 604-617)
+    // regression tests. Comparing real SERRF datasets against the R reference showed the port's
+    // single whole-group rescale (at the end of compute_compound_row) isn't equivalent to R's
+    // per-batch rescale done inside the batch loop — each batch's own median independently gets
+    // forced to match the overall raw median in R, not just the combined group's median. The
+    // outlier-swap is a safety net R applies afterward, per batch, to catch RF predictions that
+    // produced an unstable/extreme correction; it was previously excluded from the port entirely.
+
+    #[test]
+    fn rescale_batch_to_overall_median_scales_batch_subset_to_match_target() {
+        let mut row = vec![10.0, 20.0, 30.0, 100.0, 200.0, 300.0];
+        let batch_indices = vec![0, 1, 2];
+        rescale_batch_to_overall_median(&mut row, &batch_indices, 50.0);
+        // batch median of [10,20,30] is 20; factor = 50/20 = 2.5
+        assert_eq!(row, vec![25.0, 50.0, 75.0, 100.0, 200.0, 300.0]);
+    }
+
+    #[test]
+    fn rescale_batch_to_overall_median_is_a_no_op_when_batch_median_is_near_zero() {
+        let mut row = vec![-10.0, 0.0, 10.0, 999.0];
+        let batch_indices = vec![0, 1, 2];
+        rescale_batch_to_overall_median(&mut row, &batch_indices, 50.0);
+        assert_eq!(row, vec![-10.0, 0.0, 10.0, 999.0]);
+    }
+
+    #[test]
+    fn outlier_swap_replaces_a_high_outlier_that_moves_toward_center() {
+        // Whole-batch normalized values: qc=[10,10,10], target=[10,10,10,50]. n=7 fivenum gives
+        // hinges [10,10] (IQR 0), so only the 50 is an outlier (fence is exactly [10,10]).
+        let mut row = vec![10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 50.0];
+        let batch_cols = vec![0, 1, 2, 3, 4, 5, 6];
+        let target_cols = vec![3, 4, 5, 6];
+        let raw = vec![0.0, 0.0, 0.0, 12.0, 13.0, 11.0, 90.0];
+        let predictions = vec![1.0, 2.0, 3.0, 40.0]; // one per target_cols entry
+        let target_mean = 31.5; // mean of raw target values in this batch: (12+13+11+90)/4
+        let overall_target_median = 15.0;
+
+        outlier_swap(&mut row, &batch_cols, &target_cols, &raw, &predictions, target_mean, overall_target_median);
+
+        // attempt = raw[6] - (predictions[3] + target_mean - overall_target_median)
+        //         = 90 - (40 + 31.5 - 15) = 33.5, and 33.5 < out_mean (50) while out_mean (50) >
+        // batch_mean (110/7 ≈ 15.7), so the swap condition holds.
+        assert!((row[6] - 33.5).abs() < 1e-9, "row[6] = {}", row[6]);
+        // untouched positions
+        assert_eq!(&row[0..6], &[10.0, 10.0, 10.0, 10.0, 10.0, 10.0]);
+    }
+
+    #[test]
+    fn outlier_swap_does_not_replace_when_attempt_does_not_move_toward_center() {
+        let mut row = vec![10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 50.0];
+        let batch_cols = vec![0, 1, 2, 3, 4, 5, 6];
+        let target_cols = vec![3, 4, 5, 6];
+        let raw = vec![0.0, 0.0, 0.0, 12.0, 13.0, 11.0, 90.0];
+        // predictions/target_mean/overall_target_median chosen so attempt (100) is *not* less
+        // than out_mean (50), the required direction when out_mean > batch_mean.
+        let predictions = vec![1.0, 2.0, 3.0, -10.0];
+        let target_mean = 31.5;
+        let overall_target_median = 15.0;
+
+        outlier_swap(&mut row, &batch_cols, &target_cols, &raw, &predictions, target_mean, overall_target_median);
+
+        assert_eq!(row[6], 50.0, "swap must not apply when attempt doesn't reduce the outlier effect");
+    }
+
+    #[test]
+    fn outlier_swap_is_a_no_op_when_there_are_no_outliers() {
+        let mut row = vec![10.0, 11.0, 9.0, 10.0, 11.0, 9.0];
+        let before = row.clone();
+        let batch_cols = vec![0, 1, 2, 3, 4, 5];
+        let target_cols = vec![3, 4, 5];
+        let raw = vec![0.0, 0.0, 0.0, 10.0, 11.0, 9.0];
+        let predictions = vec![1.0, 2.0, 3.0];
+
+        outlier_swap(&mut row, &batch_cols, &target_cols, &raw, &predictions, 10.0, 10.0);
+
+        assert_eq!(row, before);
     }
 
     #[test]
