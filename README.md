@@ -1,9 +1,7 @@
 # RustySERRF
 
 A Rust + Next.js port of SERRF (Systematic Error Removal using Random Forest) normalization for
-metabolomics data. This repo is being migrated in stages from the original R/Shiny app
-(`app.R`, still present in this repo) to a Rust backend + Next.js/MUI frontend, deployable via
-Docker to any host.
+metabolomics data, deployable via Docker to any host.
 
 This work is based on the original author's R/Shiny implementation:
 **[slfan2013/Shiny-SERRF](https://github.com/slfan2013/Shiny-SERRF)**.
@@ -51,14 +49,8 @@ dataset — expect several minutes):
 cargo test --workspace
 ```
 
-## Running the original R/Shiny app
-
-The original app (`app.R`) still works and is kept in this repo as the reference implementation
-until the Rust port reaches full parity.
-
-**Locally:** open `app.R` in RStudio and click **Run App**, then **Open in Browser**.
-
-**Online:** https://slfan.shinyapps.io/ShinySERRF/
+The original R/Shiny app is still live at https://slfan.shinyapps.io/ShinySERRF/ but is no
+longer part of this repo.
 
 ## Building the standalone Windows executable
 
@@ -113,7 +105,3 @@ processing order of the samples/qcs.
 _label_ is the sample labels (row #4) and compound labels (column B).
 
 _No_ is the compound index.
-
-## Contact
-
-slfan at ucdavis at edu
