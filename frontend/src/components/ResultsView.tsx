@@ -30,14 +30,14 @@ export default function ResultsView({ jobId, result, onReset }: ResultsViewProps
         {median(result.qc_rsd_serrf).toFixed(3)}
       </Typography>
       <Grid container spacing={4}>
-        <Grid item xs={12}>
+        <Grid size={{ xs: 12 }}>
           <RsdBarChart
             compoundLabels={result.compound_labels}
             qcRsdRaw={result.qc_rsd_raw}
             qcRsdSerrf={result.qc_rsd_serrf}
           />
         </Grid>
-        <Grid item xs={12} md={6}>
+        <Grid size={{ xs: 12, md: 6 }}>
           <PcaScatter
             title="Before normalization"
             pc1={result.pca_before.pc1}
@@ -46,7 +46,7 @@ export default function ResultsView({ jobId, result, onReset }: ResultsViewProps
             batch={result.pca_before.batch}
           />
         </Grid>
-        <Grid item xs={12} md={6}>
+        <Grid size={{ xs: 12, md: 6 }}>
           <PcaScatter
             title="After normalization"
             pc1={result.pca_after.pc1}
