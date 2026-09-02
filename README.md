@@ -105,7 +105,3 @@ processing order of the samples/qcs.
 _label_ is the sample labels (row #4) and compound labels (column B).
 
 _No_ is the compound index.
-
-## Contact
-
-slfan at ucdavis at edu
