@@ -30,6 +30,15 @@ describe("Home", () => {
     expect(screen.getByText(/upload a dataset/i)).toBeInTheDocument();
   });
 
+  it("styles the heading through the theme instead of an unstyled raw <h1>", () => {
+    mockJobState({ phase: "idle" });
+    render(<Home />);
+
+    const heading = screen.getByRole("heading", { name: "RustySERRF" });
+    expect(heading.tagName).toBe("H1");
+    expect(heading.className).toMatch(/Mui/);
+  });
+
   it("shows an indeterminate progress view while uploading", () => {
     mockJobState({ phase: "uploading" });
     render(<Home />);
