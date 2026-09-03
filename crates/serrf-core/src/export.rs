@@ -23,6 +23,12 @@ pub fn select_non_blank_columns(matrix: &ndarray::Array2<f64>, sample_type: &[Op
     (filtered_matrix, filtered_types)
 }
 
+/// Filters a Vec that's parallel to `sample_type` (e.g. per-sample batch labels) down to the
+/// non-blank positions, keeping it aligned with [`select_non_blank_columns`]'s filtered output.
+pub fn select_non_blank_items<T: Clone>(items: &[T], sample_type: &[Option<String>]) -> Vec<T> {
+    (0..sample_type.len()).filter(|&i| sample_type[i].is_some()).map(|i| items[i].clone()).collect()
+}
+
 pub fn write_matrix_csv<W: Write>(writer: W, sample_labels: &[String], compound_labels: &[String], matrix: &ndarray::Array2<f64>) -> Result<(), SerrfError> {
     let mut writer = csv::Writer::from_writer(writer);
     writer.write_record(std::iter::once("label".to_string()).chain(sample_labels.iter().cloned()))?;
@@ -120,6 +126,17 @@ mod tests {
         let (filtered, kept_types) = select_non_blank_columns(&matrix, &sample_type);
         assert_eq!(filtered, matrix);
         assert_eq!(kept_types, sample_type);
+    }
+
+    #[test]
+    fn select_non_blank_items_drops_entries_at_blank_sample_type_positions() {
+        // Used to keep a parallel Vec (e.g. per-sample batch labels) aligned with
+        // select_non_blank_columns' filtered matrix/sample_type, so downstream consumers (the
+        // frontend's PCA chart) don't get a mismatched-length batch list.
+        let batch = vec!["A".to_string(), "B".to_string(), "A".to_string()];
+        let sample_type = vec![Some("qc".to_string()), None, Some("sample".to_string())];
+        let kept = select_non_blank_items(&batch, &sample_type);
+        assert_eq!(kept, vec!["A".to_string(), "A".to_string()]);
     }
 
     #[test]
