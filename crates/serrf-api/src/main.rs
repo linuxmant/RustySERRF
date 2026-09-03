@@ -1,5 +1,14 @@
-#[tokio::main]
-async fn main() {
+fn main() {
+    let runtime = tokio::runtime::Runtime::new().expect("failed to build the tokio runtime");
+    runtime.block_on(async_main());
+    // spawn_blocking tasks (e.g. a normalization job or a download/result response being
+    // built) are not cancellable, so the runtime's own teardown would otherwise block for
+    // however long that work takes. Cap it so a deploy's stop-timeout (Docker/systemd) is
+    // never blown through by a job that was already going to be abandoned anyway.
+    runtime.shutdown_timeout(std::time::Duration::from_secs(10));
+}
+
+async fn async_main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "serrf_api=info,tower_http=info".into()))
         .init();

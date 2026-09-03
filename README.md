@@ -34,7 +34,10 @@ directly to untrusted networks. In the non-bundled deployment mode, `serrf-api` 
 `0.0.0.0` because that's required for Docker's port mapping to reach it; this is not a
 security boundary on its own and assumes the container itself is not exposed to an
 untrusted network. If this tool is ever deployed multi-tenant or on an untrusted network,
-add real authentication first — restricting CORS alone would not meaningfully help.
+add real authentication first — restricting CORS alone would not meaningfully help. Also
+worth knowing: an in-flight normalization job cannot be cancelled once started (it runs on
+a background thread pool), so a graceful shutdown signal waits for it to finish, up to a
+10-second cap — after that cap, or on a forced kill, the job's results are simply lost.
 
 ## Running the Rust CLI
 

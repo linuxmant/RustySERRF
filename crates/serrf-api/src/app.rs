@@ -31,7 +31,11 @@ pub fn build_app() -> axum::Router {
         // Restricting the origin here would add friction without adding real security, since
         // there's no auth boundary for CORS to protect in the first place.
         .layer(tower_http::cors::CorsLayer::permissive())
-        .layer(tower_http::trace::TraceLayer::new_for_http())
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http()
+                .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO))
+                .on_response(tower_http::trace::DefaultOnResponse::new().level(tracing::Level::INFO)),
+        )
         .with_state(state);
 
     // Note: `Router::layer` only wraps routes/fallback already registered at the time it's
