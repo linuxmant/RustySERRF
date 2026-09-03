@@ -25,6 +25,11 @@ pub fn build_app() -> axum::Router {
         .route("/api/jobs/:id/result", axum::routing::get(crate::routes::result::result))
         .route("/api/jobs/:id/download", axum::routing::get(crate::routes::download::download))
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
+        // Deliberately permissive: this API has no authentication anywhere (by design — see
+        // README.md's "Security posture" section) and is meant to run on a single host behind
+        // a reverse proxy or as the bundled-frontend standalone exe, not exposed multi-tenant.
+        // Restricting the origin here would add friction without adding real security, since
+        // there's no auth boundary for CORS to protect in the first place.
         .layer(tower_http::cors::CorsLayer::permissive())
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state);
