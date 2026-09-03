@@ -12,6 +12,17 @@ pub fn filter_rows_with_variance(matrix: &ndarray::Array2<f64>, sds: &[f64]) -> 
     matrix.select(ndarray::Axis(0), &keep)
 }
 
+/// Drops blank/`None`-sampleType sample columns before PCA, mirroring app.R:1085-1086's
+/// `comb_p_pca = comb_p[!is.na(comb_p$sampleType), ]` / `comb_e_pca = comb_e[,!is.na(...)]`.
+/// Returns the filtered matrix alongside the sample types for the columns that were kept, in the
+/// same order, so the result can be zipped with PCA scores 1:1 when coloring points.
+pub fn select_non_blank_columns(matrix: &ndarray::Array2<f64>, sample_type: &[Option<String>]) -> (ndarray::Array2<f64>, Vec<Option<String>>) {
+    let keep: Vec<usize> = (0..sample_type.len()).filter(|&i| sample_type[i].is_some()).collect();
+    let filtered_matrix = matrix.select(ndarray::Axis(1), &keep);
+    let filtered_types = keep.iter().map(|&i| sample_type[i].clone()).collect();
+    (filtered_matrix, filtered_types)
+}
+
 pub fn write_matrix_csv<W: Write>(writer: W, sample_labels: &[String], compound_labels: &[String], matrix: &ndarray::Array2<f64>) -> Result<(), SerrfError> {
     let mut writer = csv::Writer::from_writer(writer);
     writer.write_record(std::iter::once("label".to_string()).chain(sample_labels.iter().cloned()))?;
@@ -87,6 +98,26 @@ mod tests {
         let sds = [0.5, 0.7];
         let filtered = filter_rows_with_variance(&matrix, &sds);
         assert_eq!(filtered.shape(), matrix.shape());
+    }
+
+    #[test]
+    fn select_non_blank_columns_drops_none_sample_type_columns() {
+        let matrix = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let sample_type = vec![Some("qc".to_string()), None, Some("sample".to_string())];
+        let (filtered, kept_types) = select_non_blank_columns(&matrix, &sample_type);
+        assert_eq!(filtered.shape(), &[2, 2]);
+        assert_eq!(filtered.column(0).to_vec(), vec![1.0, 4.0]);
+        assert_eq!(filtered.column(1).to_vec(), vec![3.0, 6.0]);
+        assert_eq!(kept_types, vec![Some("qc".to_string()), Some("sample".to_string())]);
+    }
+
+    #[test]
+    fn select_non_blank_columns_keeps_everything_when_no_column_is_blank() {
+        let matrix = array![[1.0, 2.0], [3.0, 4.0]];
+        let sample_type = vec![Some("qc".to_string()), Some("sample".to_string())];
+        let (filtered, kept_types) = select_non_blank_columns(&matrix, &sample_type);
+        assert_eq!(filtered, matrix);
+        assert_eq!(kept_types, sample_type);
     }
 
     #[test]

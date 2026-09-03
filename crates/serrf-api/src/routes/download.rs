@@ -50,23 +50,30 @@ fn build_zip(completed: &crate::job::CompletedJob) -> Result<Vec<u8>, String> {
         )
         .map_err(|e| e.to_string())?;
 
-        let sds_before: Vec<f64> = (0..completed.output.raw.nrows())
-            .map(|i| serrf_core::export::std_dev(&completed.output.raw.row(i).to_vec()))
+        // PCA excludes blank/None-sampleType columns entirely (app.R:1085-1086), not just the
+        // zero-variance-row filter below.
+        let (raw_non_blank, pca_sample_type) = serrf_core::export::select_non_blank_columns(&completed.output.raw, &completed.sample_type);
+        let sds_before: Vec<f64> = (0..raw_non_blank.nrows())
+            .map(|i| serrf_core::export::std_dev(&raw_non_blank.row(i).to_vec()))
             .collect();
-        let pca_before = serrf_core::pca::pca_first_two(&serrf_core::export::filter_rows_with_variance(&completed.output.raw, &sds_before));
-        let sds_after: Vec<f64> = (0..completed.output.serrf.nrows())
-            .map(|i| serrf_core::export::std_dev(&completed.output.serrf.row(i).to_vec()))
+        let pca_before = serrf_core::pca::pca_first_two(&serrf_core::export::filter_rows_with_variance(&raw_non_blank, &sds_before));
+
+        let (serrf_non_blank, _) = serrf_core::export::select_non_blank_columns(&completed.output.serrf, &completed.sample_type);
+        let sds_after: Vec<f64> = (0..serrf_non_blank.nrows())
+            .map(|i| serrf_core::export::std_dev(&serrf_non_blank.row(i).to_vec()))
             .collect();
-        let pca_after = serrf_core::pca::pca_first_two(&serrf_core::export::filter_rows_with_variance(&completed.output.serrf, &sds_after));
+        let pca_after = serrf_core::pca::pca_first_two(&serrf_core::export::filter_rows_with_variance(&serrf_non_blank, &sds_after));
 
         let png_file = tempfile::Builder::new().suffix(".png").tempfile().map_err(|e| e.to_string())?;
         serrf_core::report::render_report(
             png_file.path(),
             &completed.output.qc_rsd_raw,
             &completed.output.qc_rsd_serrf,
+            &completed.output.validate_rsd_raw,
+            &completed.output.validate_rsd_serrf,
             &pca_before,
             &pca_after,
-            &completed.sample_type,
+            &pca_sample_type,
         )
         .map_err(|e| e.to_string())?;
         let png_bytes = std::fs::read(png_file.path()).map_err(|e| e.to_string())?;
