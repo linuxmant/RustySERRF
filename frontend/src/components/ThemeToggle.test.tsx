@@ -10,6 +10,7 @@ describe("ThemeToggle", () => {
   });
 
   afterEach(() => {
+    delete document.documentElement.dataset.colorMode;
     vi.unstubAllGlobals();
   });
 
@@ -28,7 +29,7 @@ describe("ThemeToggle", () => {
   });
 
   it("initializes from a previously persisted mode", () => {
-    localStorage.setItem("color-mode", "dark");
+    document.documentElement.dataset.colorMode = "dark";
     render(
       <ThemeRegistry>
         <ThemeToggle />
