@@ -8,7 +8,11 @@ use axum::response::IntoResponse;
 pub async fn download(State(state): State<AppState>, Path(id): Path<String>) -> Result<impl IntoResponse, ApiError> {
     let job_id = JobId::parse(&id).map_err(|_| ApiError::BadRequest("invalid job id".to_string()))?;
 
-    let lookup = state.jobs.with_completed(job_id, build_zip).ok_or(ApiError::NotFound)?;
+    let jobs = state.jobs.clone();
+    let lookup = tokio::task::spawn_blocking(move || jobs.with_completed(job_id, build_zip))
+        .await
+        .map_err(|e| ApiError::Internal(format!("download task panicked: {e}")))?
+        .ok_or(ApiError::NotFound)?;
 
     let zip_bytes = match lookup {
         JobStoreLookup::Ready(bytes) => bytes.map_err(ApiError::Internal)?,
