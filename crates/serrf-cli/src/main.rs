@@ -42,21 +42,29 @@ fn main() -> anyhow::Result<()> {
         &output.validate_rsd_serrf,
     )?;
 
-    let sds_before: Vec<f64> = (0..dataset.values.nrows())
-        .map(|i| serrf_core::export::std_dev(&output.raw.row(i).to_vec()))
+    // PCA excludes blank/None-sampleType columns entirely (app.R:1085-1086), not just the
+    // zero-variance-row filter below.
+    let (raw_non_blank, pca_sample_type) = serrf_core::export::select_non_blank_columns(&output.raw, &samples.sample_type);
+    let sds_before: Vec<f64> = (0..raw_non_blank.nrows())
+        .map(|i| serrf_core::export::std_dev(&raw_non_blank.row(i).to_vec()))
         .collect();
-    let pca_before = serrf_core::pca::pca_first_two(&serrf_core::export::filter_rows_with_variance(&output.raw, &sds_before));
-    let sds_after: Vec<f64> = (0..dataset.values.nrows())
-        .map(|i| serrf_core::export::std_dev(&output.serrf.row(i).to_vec()))
+    let pca_before = serrf_core::pca::pca_first_two(&serrf_core::export::filter_rows_with_variance(&raw_non_blank, &sds_before));
+
+    let (serrf_non_blank, _) = serrf_core::export::select_non_blank_columns(&output.serrf, &samples.sample_type);
+    let sds_after: Vec<f64> = (0..serrf_non_blank.nrows())
+        .map(|i| serrf_core::export::std_dev(&serrf_non_blank.row(i).to_vec()))
         .collect();
-    let pca_after = serrf_core::pca::pca_first_two(&serrf_core::export::filter_rows_with_variance(&output.serrf, &sds_after));
+    let pca_after = serrf_core::pca::pca_first_two(&serrf_core::export::filter_rows_with_variance(&serrf_non_blank, &sds_after));
+
     serrf_core::report::render_report(
         &args.output_dir.join("report.png"),
         &output.qc_rsd_raw,
         &output.qc_rsd_serrf,
+        &output.validate_rsd_raw,
+        &output.validate_rsd_serrf,
         &pca_before,
         &pca_after,
-        &samples.sample_type,
+        &pca_sample_type,
     )?;
 
     println!("Done. Output written to {}", args.output_dir.display());
