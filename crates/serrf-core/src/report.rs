@@ -6,13 +6,18 @@ use std::collections::HashMap;
 const PANEL_HEIGHT: u32 = 350;
 const PCA_ROW_HEIGHT: u32 = 500;
 const WIDTH: u32 = 1200;
-const VALIDATE_PALETTE: [RGBColor; 6] = [
-    RGBColor(0, 153, 0),
-    RGBColor(0, 0, 238),
-    RGBColor(255, 0, 255),
-    RGBColor(0, 178, 178),
-    RGBColor(255, 140, 0),
-    RGBColor(139, 69, 19),
+/// @mui/x-charts's default `ScatterChart` series palette (`rainbowSurgePaletteLight`, from
+/// frontend/node_modules/@mui/x-charts/colorPalettes/categorical/rainbowSurge.js) — the web UI's
+/// PcaScatter.tsx never passes a `colors`/`colorScheme` prop, so this is what it actually renders
+/// with. Kept in sync here so report.png's PCA colors match the live web UI for the same job.
+const WEB_PALETTE: [RGBColor; 7] = [
+    RGBColor(0x42, 0x54, 0xFB),
+    RGBColor(0xFF, 0xB4, 0x22),
+    RGBColor(0xFA, 0x4F, 0x58),
+    RGBColor(0x0D, 0xBE, 0xFF),
+    RGBColor(0x22, 0xBF, 0x75),
+    RGBColor(0xFA, 0x83, 0xB4),
+    RGBColor(0xFF, 0x75, 0x11),
 ];
 
 /// Total canvas height for `num_panels` stacked RSD bar panels (QC plus one per validate type)
@@ -24,28 +29,36 @@ fn image_height(num_panels: usize) -> u32 {
     PANEL_HEIGHT * num_panels as u32 + PCA_ROW_HEIGHT
 }
 
-/// Assigns each PCA point's color by sample type, mirroring app.R's `pca_color` factor
-/// (`levels = c('sample','qc',validate_types)`): "sample" and "qc" get fixed colors, and each
-/// validate type gets its own distinct, stable color from a small palette (cycling if there are
-/// more validate types than palette entries). A sample type with no bucket (blank/`None`, or a
-/// validate name that somehow isn't in `validate_types`) falls back to a neutral gray.
-fn color_for_sample_type(sample_type: Option<&str>, validate_types: &[String]) -> RGBColor {
-    match sample_type {
-        Some("sample") => BLACK,
-        Some("qc") => RED,
-        Some(t) => match validate_types.iter().position(|v| v == t) {
-            Some(idx) => VALIDATE_PALETTE[idx % VALIDATE_PALETTE.len()],
-            None => RGBColor(160, 160, 160),
-        },
-        None => RGBColor(160, 160, 160),
-    }
+/// Assigns each category a color by its position in `categories`, cycling through
+/// [`WEB_PALETTE`] — matching how @mui/x-charts assigns colors to `ScatterChart` series by index.
+/// `categories` must be [`present_categories`]'s output for the *same* `sample_type` used to
+/// build the chart, so the index (and thus the color) lines up with the web UI's.
+fn color_for_category(category: &str, categories: &[String]) -> RGBColor {
+    let idx = categories.iter().position(|c| c == category).unwrap_or(0);
+    WEB_PALETTE[idx % WEB_PALETTE.len()]
 }
 
 /// Whether a sample-type's PCA marker should be drawn hollow (outline only) rather than filled,
 /// mirroring app.R's `dots = c(1, 16, ...)`: 'sample' uses pch=1 (hollow), every other group
-/// (qc, each validate type) uses pch=16 (filled).
+/// (qc, each validate type) uses pch=16 (filled). Independent of color: the web UI doesn't draw
+/// hollow markers at all, but this distinction is still worth keeping for report.png's fidelity
+/// to R's own plot.
 fn is_hollow_marker(sample_type: Option<&str>) -> bool {
     sample_type == Some("sample")
+}
+
+/// Ordered, de-duplicated list of sample-type category names, in the order they first appear in
+/// `sample_type` — matching the web UI's PcaScatter.tsx (`Array.from(new
+/// Set(sampleType.map(...)))`), so report.png's legend and colors agree with the live chart for
+/// the same job rather than using a fixed sample/qc/validate precedence.
+fn present_categories(sample_type: &[Option<String>]) -> Vec<String> {
+    let mut categories: Vec<String> = Vec::new();
+    for t in sample_type.iter().flatten() {
+        if !categories.contains(t) {
+            categories.push(t.clone());
+        }
+    }
+    categories
 }
 
 fn median(v: &[f64]) -> f64 {
@@ -88,8 +101,8 @@ pub fn render_report(
     }
 
     let (before, after) = pca_row.split_horizontally(WIDTH / 2);
-    draw_pca(&before, "Before", pca_before, sample_type, &validate_types)?;
-    draw_pca(&after, "After", pca_after, sample_type, &validate_types)?;
+    draw_pca(&before, "Before", "raw data", pca_before, sample_type)?;
+    draw_pca(&after, "After", "SERRF", pca_after, sample_type)?;
 
     root.present().map_err(|e| SerrfError::Parse(e.to_string()))?;
     Ok(())
@@ -141,29 +154,64 @@ fn draw_rsd_bars(area: &DrawingArea<BitMapBackend, plotters::coord::Shift>, titl
 fn draw_pca(
     area: &DrawingArea<BitMapBackend, plotters::coord::Shift>,
     title: &str,
+    data_desc: &str,
     pca: &PcaResult,
     sample_type: &[Option<String>],
-    validate_types: &[String],
 ) -> Result<(), SerrfError> {
     let x_range = range_with_margin(&pca.pc1);
     let y_range = range_with_margin(&pca.pc2);
     let mut chart = ChartBuilder::on(area)
         .caption(title, ("sans-serif", 20))
         .margin(20)
-        .x_label_area_size(30)
-        .y_label_area_size(30)
+        .x_label_area_size(40)
+        .y_label_area_size(40)
         .build_cartesian_2d(x_range, y_range)
         .map_err(|e| SerrfError::Parse(e.to_string()))?;
-    chart.configure_mesh().disable_mesh().draw().map_err(|e| SerrfError::Parse(e.to_string()))?;
     chart
-        .draw_series(pca.pc1.iter().zip(&pca.pc2).zip(sample_type).map(|((&x, &y), t)| {
-            let color = color_for_sample_type(t.as_deref(), validate_types);
-            if is_hollow_marker(t.as_deref()) {
-                Circle::new((x, y), 3, Into::<ShapeStyle>::into(color))
-            } else {
-                Circle::new((x, y), 3, color.filled())
-            }
-        }))
+        .configure_mesh()
+        .disable_mesh()
+        .x_desc(format!("PC1 ({data_desc})"))
+        .y_desc("PC2")
+        .draw()
+        .map_err(|e| SerrfError::Parse(e.to_string()))?;
+
+    // One labeled+legended series per category (rather than one flat, unlabeled point cloud) so
+    // configure_series_labels() below can render a legend mapping each color to its group name.
+    let categories = present_categories(sample_type);
+    for category in &categories {
+        let color = color_for_category(category, &categories);
+        let hollow = is_hollow_marker(Some(category.as_str()));
+        let points: Vec<(f64, f64)> = pca
+            .pc1
+            .iter()
+            .zip(&pca.pc2)
+            .zip(sample_type)
+            .filter(|(_, t)| t.as_deref() == Some(category.as_str()))
+            .map(|((&x, &y), _)| (x, y))
+            .collect();
+        chart
+            .draw_series(points.iter().map(|&(x, y)| {
+                if hollow {
+                    Circle::new((x, y), 3, Into::<ShapeStyle>::into(color))
+                } else {
+                    Circle::new((x, y), 3, color.filled())
+                }
+            }))
+            .map_err(|e| SerrfError::Parse(e.to_string()))?
+            .label(category.clone())
+            .legend(move |(x, y)| {
+                if hollow {
+                    Circle::new((x, y), 4, Into::<ShapeStyle>::into(color))
+                } else {
+                    Circle::new((x, y), 4, color.filled())
+                }
+            });
+    }
+    chart
+        .configure_series_labels()
+        .background_style(WHITE.mix(0.8))
+        .border_style(BLACK)
+        .draw()
         .map_err(|e| SerrfError::Parse(e.to_string()))?;
     Ok(())
 }
@@ -257,22 +305,47 @@ mod tests {
     }
 
     #[test]
-    fn color_for_sample_type_gives_qc_and_sample_their_own_fixed_colors() {
-        let validate_types = vec!["validate".to_string()];
-        assert_eq!(color_for_sample_type(Some("qc"), &validate_types), RED);
-        assert_eq!(color_for_sample_type(Some("sample"), &validate_types), BLACK);
+    fn present_categories_orders_by_first_appearance_not_by_fixed_type_precedence() {
+        // Matches the web UI's PcaScatter.tsx: `Array.from(new Set(sampleType.map(...)))` groups
+        // by order of first appearance in the data, not a fixed sample/qc/validate precedence —
+        // report.png's legend/colors must use the same order so the two views agree.
+        let sample_type = vec![Some("validate2".to_string()), Some("sample".to_string()), Some("validate2".to_string())];
+        assert_eq!(present_categories(&sample_type), vec!["validate2".to_string(), "sample".to_string()]);
     }
 
     #[test]
-    fn color_for_sample_type_gives_each_validate_type_a_distinct_stable_color() {
-        let validate_types = vec!["validate".to_string(), "validate2".to_string()];
-        let c1 = color_for_sample_type(Some("validate"), &validate_types);
-        let c2 = color_for_sample_type(Some("validate2"), &validate_types);
-        assert_ne!(c1, c2, "different validate types must get different colors");
-        assert_ne!(c1, RED);
-        assert_ne!(c1, BLACK);
-        // stable: asking again for the same type gives the same color
-        assert_eq!(color_for_sample_type(Some("validate"), &validate_types), c1);
+    fn present_categories_includes_every_distinct_group_once() {
+        let sample_type = vec![
+            Some("qc".to_string()),
+            Some("sample".to_string()),
+            Some("validate".to_string()),
+            Some("validate2".to_string()),
+            Some("qc".to_string()),
+        ];
+        assert_eq!(
+            present_categories(&sample_type),
+            vec!["qc".to_string(), "sample".to_string(), "validate".to_string(), "validate2".to_string()]
+        );
+    }
+
+    #[test]
+    fn color_for_category_matches_muis_default_scatter_chart_palette() {
+        // frontend/node_modules/@mui/x-charts/colorPalettes/categorical/rainbowSurge.js's
+        // `rainbowSurgePaletteLight` — @mui/x-charts's default series palette, used unchanged by
+        // PcaScatter.tsx (it passes no `colors`/`colorScheme` prop). First category -> first
+        // color, matching MUI assigning colors by series index.
+        let categories = vec!["qc".to_string(), "sample".to_string()];
+        assert_eq!(color_for_category("qc", &categories), RGBColor(0x42, 0x54, 0xFB));
+        assert_eq!(color_for_category("sample", &categories), RGBColor(0xFF, 0xB4, 0x22));
+    }
+
+    #[test]
+    fn color_for_category_is_stable_and_distinct_per_category() {
+        let categories = vec!["validate".to_string(), "validate2".to_string()];
+        let c1 = color_for_category("validate", &categories);
+        let c2 = color_for_category("validate2", &categories);
+        assert_ne!(c1, c2, "different categories must get different colors");
+        assert_eq!(color_for_category("validate", &categories), c1, "same category must always get the same color");
     }
 
     #[test]
