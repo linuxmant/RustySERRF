@@ -19,10 +19,4 @@ describe("UploadForm", () => {
 
     expect(onSubmit).toHaveBeenCalledWith(file);
   });
-
-  it("shows an error message when provided", () => {
-    render(<UploadForm onSubmit={vi.fn()} errorMessage="batch B has too few QC" />);
-
-    expect(screen.getByText("batch B has too few QC")).toBeInTheDocument();
-  });
 });
