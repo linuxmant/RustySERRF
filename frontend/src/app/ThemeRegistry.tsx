@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useEffect, useMemo, useState } from "react";
+import { createContext, useMemo, useState } from "react";
 import CssBaseline from "@mui/material/CssBaseline";
 import { ThemeProvider } from "@mui/material/styles";
 import { AppRouterCacheProvider } from "@mui/material-nextjs/v14-appRouter";
@@ -13,21 +13,18 @@ export const ColorModeContext = createContext<{ mode: ColorMode; toggle: () => v
   toggle: () => {},
 });
 
-export default function ThemeRegistry({ children }: { children: React.ReactNode }) {
-  const [mode, setMode] = useState<ColorMode>("light");
+function getInitialMode(): ColorMode {
+  // The blocking inline script in layout.tsx's <head> (COLOR_MODE_INIT_SCRIPT) runs before
+  // hydration and stamps this attribute, so reading it here — rather than always starting at
+  // "light" and correcting in a useEffect after mount — avoids a flash of the wrong theme.
+  if (typeof document === "undefined") {
+    return "light";
+  }
+  return document.documentElement.dataset.colorMode === "dark" ? "dark" : "light";
+}
 
-  useEffect(() => {
-    // localStorage/matchMedia are browser-only and unavailable during this static-export app's
-    // server-rendered pass, so the initial mode can't be computed in a useState lazy initializer
-    // (it would throw at build/export time) — this one-time effect is the correct place for it.
-    const stored = localStorage.getItem("color-mode");
-    if (stored === "light" || stored === "dark") {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setMode(stored);
-    } else if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
-      setMode("dark");
-    }
-  }, []);
+export default function ThemeRegistry({ children }: { children: React.ReactNode }) {
+  const [mode, setMode] = useState<ColorMode>(getInitialMode);
 
   const contextValue = useMemo(
     () => ({
@@ -36,6 +33,7 @@ export default function ThemeRegistry({ children }: { children: React.ReactNode 
         setMode((current) => {
           const next = current === "light" ? "dark" : "light";
           localStorage.setItem("color-mode", next);
+          document.documentElement.dataset.colorMode = next;
           return next;
         });
       },
