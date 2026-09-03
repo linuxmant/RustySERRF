@@ -16,6 +16,7 @@ pub fn build_app() -> axum::Router {
         .route("/api/jobs/:id/download", axum::routing::get(crate::routes::download::download))
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
         .layer(tower_http::cors::CorsLayer::permissive())
+        .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state);
 
     // Note: `Router::layer` only wraps routes/fallback already registered at the time it's
