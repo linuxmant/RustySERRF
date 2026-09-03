@@ -7,6 +7,16 @@ pub fn build_app() -> axum::Router {
     let state = AppState {
         jobs: crate::job::JobStore::new(),
     };
+
+    let sweep_jobs = state.jobs.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5 * 60));
+        loop {
+            interval.tick().await;
+            sweep_jobs.evict_expired(std::time::Duration::from_secs(30 * 60));
+        }
+    });
+
     let router = axum::Router::new()
         .route("/health", axum::routing::get(health))
         .route("/api/jobs", axum::routing::post(crate::routes::upload::upload))
