@@ -28,7 +28,9 @@ pub fn write_matrix_csv<W: Write>(writer: W, sample_labels: &[String], compound_
     writer.write_record(std::iter::once("label".to_string()).chain(sample_labels.iter().cloned()))?;
     for (i, label) in compound_labels.iter().enumerate() {
         let mut row = vec![label.clone()];
-        row.extend(matrix.row(i).iter().map(|v| v.to_string()));
+        // Intensity/peak-area values are reported as whole numbers; NaN (blank/missing cells,
+        // app.R:1131) rounds to itself and still serializes as a recognizable missing marker.
+        row.extend(matrix.row(i).iter().map(|v| v.round().to_string()));
         writer.write_record(&row)?;
     }
     writer.flush().map_err(SerrfError::Io)?;
@@ -121,6 +123,24 @@ mod tests {
     }
 
     #[test]
+    fn write_matrix_csv_rounds_values_to_the_nearest_integer() {
+        // Intensity/peak-area values are reported as whole numbers; fractional precision from
+        // imputation/normalization arithmetic isn't meaningful at the reporting stage.
+        let matrix = array![[4836444.13512831, 1.4, 2.5], [0.5, -0.5, f64::NAN]];
+        let sample_labels = vec!["s1".to_string(), "s2".to_string(), "s3".to_string()];
+        let compound_labels = vec!["c1".to_string(), "c2".to_string()];
+        let mut buf = Vec::new();
+        write_matrix_csv(&mut buf, &sample_labels, &compound_labels, &matrix).unwrap();
+
+        let content = String::from_utf8(buf).unwrap();
+        let mut lines = content.lines();
+        assert_eq!(lines.next().unwrap(), "label,s1,s2,s3");
+        assert_eq!(lines.next().unwrap(), "c1,4836444,1,3");
+        assert_eq!(lines.next().unwrap(), "c2,1,-1,NaN");
+        assert!(lines.next().is_none());
+    }
+
+    #[test]
     fn write_matrix_csv_writes_a_header_using_the_real_sample_labels() {
         let matrix = array![[1.5, 2.5], [3.5, 4.5]];
         let sample_labels = vec!["QC001".to_string(), "GB00042".to_string()];
@@ -131,8 +151,8 @@ mod tests {
         let content = String::from_utf8(buf).unwrap();
         let mut lines = content.lines();
         assert_eq!(lines.next().unwrap(), "label,QC001,GB00042");
-        assert_eq!(lines.next().unwrap(), "c1,1.5,2.5");
-        assert_eq!(lines.next().unwrap(), "c2,3.5,4.5");
+        assert_eq!(lines.next().unwrap(), "c1,2,3");
+        assert_eq!(lines.next().unwrap(), "c2,4,5");
         assert!(lines.next().is_none());
     }
 

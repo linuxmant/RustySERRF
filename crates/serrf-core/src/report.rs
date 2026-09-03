@@ -41,6 +41,13 @@ fn color_for_sample_type(sample_type: Option<&str>, validate_types: &[String]) -
     }
 }
 
+/// Whether a sample-type's PCA marker should be drawn hollow (outline only) rather than filled,
+/// mirroring app.R's `dots = c(1, 16, ...)`: 'sample' uses pch=1 (hollow), every other group
+/// (qc, each validate type) uses pch=16 (filled).
+fn is_hollow_marker(sample_type: Option<&str>) -> bool {
+    sample_type == Some("sample")
+}
+
 fn median(v: &[f64]) -> f64 {
     let mut sorted: Vec<f64> = v.iter().cloned().filter(|x| x.is_finite()).collect();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -102,7 +109,7 @@ fn draw_rsd_bars(area: &DrawingArea<BitMapBackend, plotters::coord::Shift>, titl
         .map_err(|e| SerrfError::Parse(e.to_string()))?;
     chart
         .configure_mesh()
-        .disable_x_mesh()
+        .disable_mesh()
         .x_labels(2)
         .x_label_formatter(&|x| match x {
             0 => "none".to_string(),
@@ -147,11 +154,15 @@ fn draw_pca(
         .y_label_area_size(30)
         .build_cartesian_2d(x_range, y_range)
         .map_err(|e| SerrfError::Parse(e.to_string()))?;
-    chart.configure_mesh().draw().map_err(|e| SerrfError::Parse(e.to_string()))?;
+    chart.configure_mesh().disable_mesh().draw().map_err(|e| SerrfError::Parse(e.to_string()))?;
     chart
         .draw_series(pca.pc1.iter().zip(&pca.pc2).zip(sample_type).map(|((&x, &y), t)| {
             let color = color_for_sample_type(t.as_deref(), validate_types);
-            Circle::new((x, y), 3, color.filled())
+            if is_hollow_marker(t.as_deref()) {
+                Circle::new((x, y), 3, Into::<ShapeStyle>::into(color))
+            } else {
+                Circle::new((x, y), 3, color.filled())
+            }
         }))
         .map_err(|e| SerrfError::Parse(e.to_string()))?;
     Ok(())
@@ -262,5 +273,16 @@ mod tests {
         assert_ne!(c1, BLACK);
         // stable: asking again for the same type gives the same color
         assert_eq!(color_for_sample_type(Some("validate"), &validate_types), c1);
+    }
+
+    #[test]
+    fn only_the_sample_group_is_drawn_hollow() {
+        // Mirrors app.R's `dots = c(1, 16, ...)`: 'sample' points use pch=1 (hollow), every other
+        // group (qc, each validate type) uses pch=16 (filled).
+        assert!(is_hollow_marker(Some("sample")));
+        assert!(!is_hollow_marker(Some("qc")));
+        assert!(!is_hollow_marker(Some("validate")));
+        assert!(!is_hollow_marker(Some("validate2")));
+        assert!(!is_hollow_marker(None));
     }
 }
