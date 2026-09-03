@@ -29,14 +29,21 @@ pub async fn result(State(state): State<AppState>, Path(id): Path<String>) -> Re
     let lookup = state
         .jobs
         .with_completed(job_id, |completed| {
-            let sds_before: Vec<f64> = (0..completed.output.raw.nrows())
-                .map(|i| serrf_core::export::std_dev(&completed.output.raw.row(i).to_vec()))
+            // PCA excludes blank/None-sampleType columns entirely (app.R:1085-1086), matching
+            // the report.png path in download.rs — otherwise the frontend renders an extra
+            // "unknown" series for a group R never shows.
+            let (raw_non_blank, pca_sample_type) = serrf_core::export::select_non_blank_columns(&completed.output.raw, &completed.sample_type);
+            let pca_batch = serrf_core::export::select_non_blank_items(&completed.batch, &completed.sample_type);
+            let sds_before: Vec<f64> = (0..raw_non_blank.nrows())
+                .map(|i| serrf_core::export::std_dev(&raw_non_blank.row(i).to_vec()))
                 .collect();
-            let pca_before = serrf_core::pca::pca_first_two(&serrf_core::export::filter_rows_with_variance(&completed.output.raw, &sds_before));
-            let sds_after: Vec<f64> = (0..completed.output.serrf.nrows())
-                .map(|i| serrf_core::export::std_dev(&completed.output.serrf.row(i).to_vec()))
+            let pca_before = serrf_core::pca::pca_first_two(&serrf_core::export::filter_rows_with_variance(&raw_non_blank, &sds_before));
+
+            let (serrf_non_blank, _) = serrf_core::export::select_non_blank_columns(&completed.output.serrf, &completed.sample_type);
+            let sds_after: Vec<f64> = (0..serrf_non_blank.nrows())
+                .map(|i| serrf_core::export::std_dev(&serrf_non_blank.row(i).to_vec()))
                 .collect();
-            let pca_after = serrf_core::pca::pca_first_two(&serrf_core::export::filter_rows_with_variance(&completed.output.serrf, &sds_after));
+            let pca_after = serrf_core::pca::pca_first_two(&serrf_core::export::filter_rows_with_variance(&serrf_non_blank, &sds_after));
 
             ResultJson {
                 compound_labels: completed.compound_labels.clone(),
@@ -47,14 +54,14 @@ pub async fn result(State(state): State<AppState>, Path(id): Path<String>) -> Re
                 pca_before: PcaJson {
                     pc1: pca_before.pc1,
                     pc2: pca_before.pc2,
-                    sample_type: completed.sample_type.clone(),
-                    batch: completed.batch.clone(),
+                    sample_type: pca_sample_type.clone(),
+                    batch: pca_batch.clone(),
                 },
                 pca_after: PcaJson {
                     pc1: pca_after.pc1,
                     pc2: pca_after.pc2,
-                    sample_type: completed.sample_type.clone(),
-                    batch: completed.batch.clone(),
+                    sample_type: pca_sample_type,
+                    batch: pca_batch,
                 },
             }
         })

@@ -102,7 +102,7 @@ mod tests {
         // metadata (batch/time/type).
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("matrix.csv");
-        let matrix = array![[1.5, 2.5], [3.5, 4.5]];
+        let matrix = array![[1.0, 2.0], [3.0, 4.0]];
         let sample_labels = vec!["QC001".to_string(), "GB00042".to_string()];
         let compound_labels = vec!["c1".to_string(), "c2".to_string()];
         write_matrix_csv(&path, &sample_labels, &compound_labels, &matrix).unwrap();
@@ -110,8 +110,8 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         let mut lines = content.lines();
         assert_eq!(lines.next().unwrap(), "label,QC001,GB00042");
-        assert_eq!(lines.next().unwrap(), "c1,1.5,2.5");
-        assert_eq!(lines.next().unwrap(), "c2,3.5,4.5");
+        assert_eq!(lines.next().unwrap(), "c1,1,2");
+        assert_eq!(lines.next().unwrap(), "c2,3,4");
         assert!(lines.next().is_none());
     }
 

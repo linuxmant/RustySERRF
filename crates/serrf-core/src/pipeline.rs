@@ -142,7 +142,14 @@ pub fn normalize(
         }
     }
 
-    for validate_type in &validate_types {
+    if !validate_types.is_empty() {
+        progress(Progress {
+            stage: "validate normalization".into(),
+            current: 0,
+            total: validate_types.len() * working.nrows(),
+        });
+    }
+    for (type_idx, validate_type) in validate_types.iter().enumerate() {
         let validate_cols: Vec<usize> = (0..working.ncols())
             .filter(|&c| samples.sample_type[c].as_deref() == Some(validate_type.as_str()))
             .collect();
@@ -160,7 +167,13 @@ pub fn normalize(
                 num_vars: config.num_vars,
             },
             config.seed,
-            |_, _| {},
+            |current, _total| {
+                progress(Progress {
+                    stage: "validate normalization".into(),
+                    current: type_idx * working.nrows() + current,
+                    total: validate_types.len() * working.nrows(),
+                })
+            },
         );
         let normed_rsd: Vec<f64> = (0..working.nrows()).map(|i| rsd(&group.normed_target.row(i).to_vec())).collect();
         for (idx, &c) in validate_cols.iter().enumerate() {
@@ -493,5 +506,39 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn reports_progress_during_validate_type_normalization_not_just_a_frozen_bar() {
+        // Before this fix, the per-validate-type serrf_normalize_group call passed a no-op
+        // progress closure (`|_, _| {}`), so the frontend's progress bar sat frozen for however
+        // long validate-type normalization took, right after "cross-validation" finished.
+        let (dataset, samples) = synthetic_dataset_with_validate_and_blank();
+        let config = SerrfConfig {
+            num_vars: 3,
+            seed: 1,
+            cv_folds: 3,
+        };
+        let n_compounds = dataset.values.nrows();
+
+        let mut validate_progress_events: Vec<(usize, usize)> = Vec::new();
+        normalize(&dataset, &samples, &config, |p| {
+            if p.stage == "validate normalization" {
+                validate_progress_events.push((p.current, p.total));
+            }
+        })
+        .unwrap();
+
+        assert!(
+            !validate_progress_events.is_empty(),
+            "expected at least one 'validate normalization' progress event"
+        );
+        let expected_total = n_compounds; // one validate type in this fixture
+        assert!(
+            validate_progress_events.iter().all(|&(_, total)| total == expected_total),
+            "total should be constant across every event: {validate_progress_events:?}"
+        );
+        let max_current = validate_progress_events.iter().map(|&(current, _)| current).max().unwrap();
+        assert_eq!(max_current, expected_total, "progress should reach the full total, not stop short");
     }
 }

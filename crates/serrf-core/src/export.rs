@@ -23,12 +23,20 @@ pub fn select_non_blank_columns(matrix: &ndarray::Array2<f64>, sample_type: &[Op
     (filtered_matrix, filtered_types)
 }
 
+/// Filters a Vec that's parallel to `sample_type` (e.g. per-sample batch labels) down to the
+/// non-blank positions, keeping it aligned with [`select_non_blank_columns`]'s filtered output.
+pub fn select_non_blank_items<T: Clone>(items: &[T], sample_type: &[Option<String>]) -> Vec<T> {
+    (0..sample_type.len()).filter(|&i| sample_type[i].is_some()).map(|i| items[i].clone()).collect()
+}
+
 pub fn write_matrix_csv<W: Write>(writer: W, sample_labels: &[String], compound_labels: &[String], matrix: &ndarray::Array2<f64>) -> Result<(), SerrfError> {
     let mut writer = csv::Writer::from_writer(writer);
     writer.write_record(std::iter::once("label".to_string()).chain(sample_labels.iter().cloned()))?;
     for (i, label) in compound_labels.iter().enumerate() {
         let mut row = vec![label.clone()];
-        row.extend(matrix.row(i).iter().map(|v| v.to_string()));
+        // Intensity/peak-area values are reported as whole numbers; NaN (blank/missing cells,
+        // app.R:1131) rounds to itself and still serializes as a recognizable missing marker.
+        row.extend(matrix.row(i).iter().map(|v| v.round().to_string()));
         writer.write_record(&row)?;
     }
     writer.flush().map_err(SerrfError::Io)?;
@@ -121,6 +129,35 @@ mod tests {
     }
 
     #[test]
+    fn select_non_blank_items_drops_entries_at_blank_sample_type_positions() {
+        // Used to keep a parallel Vec (e.g. per-sample batch labels) aligned with
+        // select_non_blank_columns' filtered matrix/sample_type, so downstream consumers (the
+        // frontend's PCA chart) don't get a mismatched-length batch list.
+        let batch = vec!["A".to_string(), "B".to_string(), "A".to_string()];
+        let sample_type = vec![Some("qc".to_string()), None, Some("sample".to_string())];
+        let kept = select_non_blank_items(&batch, &sample_type);
+        assert_eq!(kept, vec!["A".to_string(), "A".to_string()]);
+    }
+
+    #[test]
+    fn write_matrix_csv_rounds_values_to_the_nearest_integer() {
+        // Intensity/peak-area values are reported as whole numbers; fractional precision from
+        // imputation/normalization arithmetic isn't meaningful at the reporting stage.
+        let matrix = array![[4836444.13512831, 1.4, 2.5], [0.5, -0.5, f64::NAN]];
+        let sample_labels = vec!["s1".to_string(), "s2".to_string(), "s3".to_string()];
+        let compound_labels = vec!["c1".to_string(), "c2".to_string()];
+        let mut buf = Vec::new();
+        write_matrix_csv(&mut buf, &sample_labels, &compound_labels, &matrix).unwrap();
+
+        let content = String::from_utf8(buf).unwrap();
+        let mut lines = content.lines();
+        assert_eq!(lines.next().unwrap(), "label,s1,s2,s3");
+        assert_eq!(lines.next().unwrap(), "c1,4836444,1,3");
+        assert_eq!(lines.next().unwrap(), "c2,1,-1,NaN");
+        assert!(lines.next().is_none());
+    }
+
+    #[test]
     fn write_matrix_csv_writes_a_header_using_the_real_sample_labels() {
         let matrix = array![[1.5, 2.5], [3.5, 4.5]];
         let sample_labels = vec!["QC001".to_string(), "GB00042".to_string()];
@@ -131,8 +168,8 @@ mod tests {
         let content = String::from_utf8(buf).unwrap();
         let mut lines = content.lines();
         assert_eq!(lines.next().unwrap(), "label,QC001,GB00042");
-        assert_eq!(lines.next().unwrap(), "c1,1.5,2.5");
-        assert_eq!(lines.next().unwrap(), "c2,3.5,4.5");
+        assert_eq!(lines.next().unwrap(), "c1,2,3");
+        assert_eq!(lines.next().unwrap(), "c2,4,5");
         assert!(lines.next().is_none());
     }
 
