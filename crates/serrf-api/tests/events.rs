@@ -109,49 +109,57 @@ async fn events_for_a_malformed_job_id_returns_400() {
     assert_eq!(response.status(), 400);
 }
 
-fn large_csv_fixture(compound_count: usize) -> String {
-    let mut header = vec!["No".to_string(), "label".to_string()];
-    let mut batch_row = vec!["".to_string(), "batch".to_string()];
-    let mut type_row = vec!["".to_string(), "sampleType".to_string()];
-    let mut time_row = vec!["".to_string(), "time".to_string()];
-    for j in 0..20 {
-        let is_qc = j < 12;
-        let batch = if j % 4 < 2 { "A" } else { "B" };
-        header.push(format!("s{j}"));
-        batch_row.push(batch.to_string());
-        type_row.push(if is_qc { "qc" } else { "sample" }.to_string());
-        time_row.push(j.to_string());
-    }
-    let mut lines = vec![batch_row.join(","), type_row.join(","), time_row.join(","), header.join(",")];
-    for i in 0..compound_count {
-        let mut row = vec![(i + 1).to_string(), format!("Compound{i}")];
-        for j in 0..20 {
-            row.push((100.0 + i as f64 + j as f64 % 3.0).to_string());
-        }
-        lines.push(row.join(","));
-    }
-    lines.join("\n")
+async fn spawn_minimal_events_app() -> (String, serrf_api::job::JobId) {
+    let jobs = serrf_api::job::JobStore::new();
+    let (job_id, _rx) = jobs.create();
+    let state = serrf_api::app::AppState { jobs };
+    let router = axum::Router::new()
+        .route("/api/jobs/:id/events", axum::routing::get(serrf_api::routes::events::events))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    (format!("http://{addr}"), job_id)
 }
 
 #[tokio::test]
-async fn events_stream_includes_a_keep_alive_ping_while_a_long_job_runs() {
-    let base_url = spawn_app().await;
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build().unwrap();
-    let part = reqwest::multipart::Part::text(large_csv_fixture(350))
-        .file_name("dataset.csv")
-        .mime_str("text/csv")
-        .unwrap();
-    let form = reqwest::multipart::Form::new().part("file", part);
-    let response = client.post(format!("{base_url}/api/jobs")).multipart(form).send().await.unwrap();
-    let body: serde_json::Value = response.json().await.unwrap();
-    let job_id = body["job_id"].as_str().unwrap().to_string();
+async fn events_stream_includes_a_keep_alive_ping_during_idle_job() {
+    let (base_url, job_id) = spawn_minimal_events_app().await;
+    let client = reqwest::Client::new();
 
-    let response = client.get(format!("{base_url}/api/jobs/{job_id}/events")).send().await.unwrap();
+    let mut response = client.get(format!("{base_url}/api/jobs/{job_id}/events")).send().await.unwrap();
     assert_eq!(response.status(), 200);
-    let body = response.text().await.unwrap();
 
+    // Read the response incrementally for 3.5 seconds to capture keep-alive pings.
+    // The stream never closes because the job never reaches a terminal state, so we
+    // cannot use .text().await which would wait forever. Instead, we read chunks
+    // with a timeout to give the keep-alive timer (3 seconds) a chance to fire.
+    let mut body = Vec::new();
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_millis(3500);
+
+    loop {
+        if start.elapsed() > timeout {
+            break;
+        }
+
+        let remaining = timeout.saturating_sub(start.elapsed());
+        match tokio::time::timeout(remaining, response.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                body.extend_from_slice(&chunk);
+            }
+            _ => break, // Stream closed, error, or timeout
+        }
+    }
+
+    let body_str = String::from_utf8_lossy(&body);
+
+    // Check for SSE keep-alive comment: a line that is exactly ":" (no space after colon).
+    // Axum's keep-alive mechanism sends bare-colon SSE comment frames.
     assert!(
-        body.contains(": ") || body.lines().any(|line| line.starts_with(':')),
-        "expected at least one SSE keep-alive comment line before the terminal event, got: {body}"
+        body_str.lines().any(|line| line == ":"),
+        "expected at least one SSE keep-alive comment line (exactly ':'), got:\n{body_str}"
     );
 }
