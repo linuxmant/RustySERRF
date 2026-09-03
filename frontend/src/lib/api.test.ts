@@ -70,6 +70,23 @@ describe("uploadDataset", () => {
     const file = new File(["x"], "dataset.csv");
     await expect(uploadDataset(file)).rejects.toMatchObject(new ApiError("bad batch", 400));
   });
+
+  it("falls back to the response's statusText when the error body isn't JSON", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+        json: async () => {
+          throw new Error("not JSON");
+        },
+      })
+    );
+
+    const file = new File(["x"], "dataset.csv");
+    await expect(uploadDataset(file)).rejects.toMatchObject(new ApiError("Internal Server Error", 500));
+  });
 });
 
 describe("subscribeToJobEvents", () => {
@@ -120,6 +137,22 @@ describe("subscribeToJobEvents", () => {
     });
   });
 
+  it("on a permanent error, emits a synthetic failure when the job is still non-terminal", async () => {
+    const events: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: "progress" }) }));
+    subscribeToJobEvents("job-1", (event) => events.push(event));
+
+    const source = FakeEventSource.instances[0];
+    source.readyState = FakeEventSource.CLOSED;
+    source.triggerError();
+
+    await vi.waitFor(() => {
+      expect(events).toEqual([
+        { status: "failed", error: "Lost connection to the server while the job was still running." },
+      ]);
+    });
+  });
+
   it("ignores a transient error where readyState is not CLOSED", async () => {
     const events: unknown[] = [];
     const fetchMock = vi.fn();
@@ -144,6 +177,24 @@ describe("fetchJobStatus and fetchJobResult", () => {
 
     expect(fetchMock).toHaveBeenCalledWith("/api/jobs/job-1");
     expect(result).toEqual({ status: "queued" });
+  });
+
+  it("fetchJobStatus throws ApiError on a non-ok response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 404, json: async () => ({ error: "job not found" }) })
+    );
+
+    await expect(fetchJobStatus("job-1")).rejects.toMatchObject(new ApiError("job not found", 404));
+  });
+
+  it("fetchJobResult throws ApiError on a non-ok response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 404, json: async () => ({ error: "job not found" }) })
+    );
+
+    await expect(fetchJobResult("job-1")).rejects.toMatchObject(new ApiError("job not found", 404));
   });
 
   it("fetchJobResult GETs the result endpoint", async () => {

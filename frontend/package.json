@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "lint": "next lint",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run src",
     "test:coverage": "vitest run src --coverage",
@@ -15,28 +15,28 @@
   "dependencies": {
     "@emotion/react": "^11.13.0",
     "@emotion/styled": "^11.13.0",
-    "@mui/icons-material": "^6.1.0",
-    "@mui/material": "^6.1.0",
-    "@mui/material-nextjs": "^6.1.0",
-    "@mui/x-charts": "^7.18.0",
-    "next": "^15.0.0",
+    "next": "^16.3.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@mui/icons-material": "^9.4.0",
+    "@mui/material": "^9.4.0",
+    "@mui/material-nextjs": "^9.4.0",
+    "@mui/x-charts": "^9.12.0",
     "@playwright/test": "^1.48.0",
-    "@testing-library/jest-dom": "^6.5.0",
+    "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.0.0",
-    "@testing-library/user-event": "^14.5.0",
-    "@types/node": "^22.0.0",
+    "@testing-library/user-event": "^14.6.7",
+    "@types/node": "^26.4.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^4.3.0",
-    "@vitest/coverage-v8": "^2.1.0",
-    "eslint": "^8.57.0",
-    "eslint-config-next": "^15.0.0",
-    "jsdom": "^25.0.0",
-    "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "@vitejs/plugin-react": "^6.1.1",
+    "@vitest/coverage-v8": "^4.1.11",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.3.4",
+    "jsdom": "^29.1.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.11"
   }
 }

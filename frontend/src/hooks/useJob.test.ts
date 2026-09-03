@@ -53,6 +53,26 @@ describe("useJob", () => {
     );
   });
 
+  it("moves to error when fetching the result fails after the job completes", async () => {
+    let emit: (event: JobEvent) => void = () => {};
+    vi.mocked(api.uploadDataset).mockResolvedValue({ jobId: "job-1" });
+    vi.mocked(api.subscribeToJobEvents).mockImplementation((_jobId, onEvent) => {
+      emit = onEvent;
+      return () => {};
+    });
+    vi.mocked(api.fetchJobResult).mockRejectedValue(new Error("result fetch failed"));
+
+    const { result } = renderHook(() => useJob());
+    await act(async () => result.current.submit(new File(["x"], "dataset.csv")));
+    await waitFor(() => expect(result.current.state.phase).toBe("processing"));
+
+    await act(async () => emit({ status: "completed" }));
+
+    await waitFor(() =>
+      expect(result.current.state).toEqual({ phase: "error", message: "result fetch failed" })
+    );
+  });
+
   it("moves to error when the job fails", async () => {
     let emit: (event: JobEvent) => void = () => {};
     vi.mocked(api.uploadDataset).mockResolvedValue({ jobId: "job-1" });
