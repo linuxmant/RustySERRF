@@ -2249,7 +2249,7 @@ dependencies = [
 
 [[package]]
 name = "serrf-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-stream",
  "axum",
@@ -2270,7 +2270,7 @@ dependencies = [
 
 [[package]]
 name = "serrf-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2284,7 +2284,7 @@ dependencies = [
 
 [[package]]
 name = "serrf-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "calamine",
  "csv",
