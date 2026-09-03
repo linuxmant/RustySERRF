@@ -87,6 +87,23 @@ describe("uploadDataset", () => {
     const file = new File(["x"], "dataset.csv");
     await expect(uploadDataset(file)).rejects.toMatchObject(new ApiError("Internal Server Error", 500));
   });
+
+  it("shows a friendly message for a 413 response instead of the raw status text", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 413,
+        statusText: "Payload Too Large",
+        json: async () => {
+          throw new Error("no JSON body on a 413");
+        },
+      })
+    );
+
+    const file = new File(["a,b\n1,2"], "dataset.csv", { type: "text/csv" });
+    await expect(uploadDataset(file)).rejects.toMatchObject(new ApiError("File is too large (max 10MB).", 413));
+  });
 });
 
 describe("subscribeToJobEvents", () => {
