@@ -56,6 +56,15 @@ enum JobResult {
 
 struct JobHandle {
     events: tokio::sync::watch::Sender<JobEvent>,
+    // Every event this job has ever emitted, in order. A `watch` channel alone only ever
+    // exposes the LATEST value — a client that connects to /events after the job has
+    // already progressed (or finished) would otherwise permanently miss everything that
+    // happened before it subscribed, no matter how fast it reconnects. `events.rs` replays
+    // this history to a new subscriber before tailing live updates. Guarded by its own
+    // mutex (rather than requiring JobStore's outer write lock) so pushing progress from
+    // many parallel per-compound worker threads doesn't serialize on a lock shared with
+    // every other job in the store.
+    history: std::sync::Mutex<Vec<JobEvent>>,
     result: JobResult,
     completed_at: Option<std::time::Instant>,
 }
@@ -86,6 +95,7 @@ impl JobStore {
             id,
             JobHandle {
                 events: tx,
+                history: std::sync::Mutex::new(vec![JobEvent::Queued]),
                 result: JobResult::Pending,
                 completed_at: None,
             },
@@ -95,6 +105,12 @@ impl JobStore {
 
     pub fn push_progress(&self, id: JobId, event: JobEvent) {
         if let Some(handle) = self.jobs.read().unwrap().get(&id) {
+            // Both the history append and the watch update happen while holding the same
+            // lock, so a concurrent `subscribe()` can never observe a history that already
+            // includes this event but a watch receiver that doesn't (or vice versa) --
+            // either of those would cause a late subscriber to duplicate or drop it.
+            let mut history = handle.history.lock().unwrap();
+            history.push(event.clone());
             let _ = handle.events.send_replace(event);
         }
     }
@@ -103,20 +119,29 @@ impl JobStore {
         if let Some(handle) = self.jobs.write().unwrap().get_mut(&id) {
             handle.result = JobResult::Done(Box::new(completed));
             handle.completed_at = Some(std::time::Instant::now());
+            handle.history.get_mut().unwrap().push(JobEvent::Completed);
             let _ = handle.events.send_replace(JobEvent::Completed);
         }
     }
 
     pub fn fail(&self, id: JobId, error: String) {
         if let Some(handle) = self.jobs.write().unwrap().get_mut(&id) {
+            handle.history.get_mut().unwrap().push(JobEvent::Failed { error: error.clone() });
             let _ = handle.events.send_replace(JobEvent::Failed { error: error.clone() });
             handle.result = JobResult::Errored(error);
             handle.completed_at = Some(std::time::Instant::now());
         }
     }
 
-    pub fn subscribe(&self, id: JobId) -> Option<tokio::sync::watch::Receiver<JobEvent>> {
-        self.jobs.read().unwrap().get(&id).map(|h| h.events.subscribe())
+    /// Returns every event the job has emitted so far, plus a live receiver for anything
+    /// still to come. The two are captured atomically (under the same per-job lock as
+    /// `push_progress`) so the receiver is guaranteed to only ever fire for events AFTER
+    /// the returned history, never re-delivering or skipping one.
+    pub fn subscribe(&self, id: JobId) -> Option<(Vec<JobEvent>, tokio::sync::watch::Receiver<JobEvent>)> {
+        let jobs = self.jobs.read().unwrap();
+        let handle = jobs.get(&id)?;
+        let history = handle.history.lock().unwrap();
+        Some((history.clone(), handle.events.subscribe()))
     }
 
     pub fn with_completed<R>(&self, id: JobId, f: impl FnOnce(&CompletedJob) -> R) -> Option<JobStoreLookup<R>> {
@@ -289,6 +314,132 @@ mod tests {
         store.evict_expired(std::time::Duration::from_secs(0));
 
         assert!(store.subscribe(id).is_some());
+    }
+
+    #[test]
+    fn subscribe_returns_full_history_of_past_progress_events_not_just_the_latest() {
+        // Regression test: a `watch` channel alone only exposes the LATEST value, so a
+        // client that subscribes after several progress events have already fired would
+        // otherwise permanently miss all but the most recent one -- exactly the bug this
+        // history buffer exists to fix.
+        let store = JobStore::new();
+        let (id, _rx) = store.create();
+        store.push_progress(
+            id,
+            JobEvent::Progress {
+                stage: "raw RSD".into(),
+                current: 0,
+                total: 1,
+            },
+        );
+        store.push_progress(
+            id,
+            JobEvent::Progress {
+                stage: "SERRF normalization".into(),
+                current: 1,
+                total: 268,
+            },
+        );
+        store.push_progress(
+            id,
+            JobEvent::Progress {
+                stage: "SERRF normalization".into(),
+                current: 2,
+                total: 268,
+            },
+        );
+
+        let (history, _rx) = store.subscribe(id).expect("job should exist");
+
+        assert_eq!(
+            history,
+            vec![
+                JobEvent::Queued,
+                JobEvent::Progress {
+                    stage: "raw RSD".into(),
+                    current: 0,
+                    total: 1
+                },
+                JobEvent::Progress {
+                    stage: "SERRF normalization".into(),
+                    current: 1,
+                    total: 268
+                },
+                JobEvent::Progress {
+                    stage: "SERRF normalization".into(),
+                    current: 2,
+                    total: 268
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn subscribe_after_completion_returns_history_ending_in_the_terminal_event() {
+        let store = JobStore::new();
+        let (id, _rx) = store.create();
+        store.push_progress(
+            id,
+            JobEvent::Progress {
+                stage: "SERRF normalization".into(),
+                current: 1,
+                total: 10,
+            },
+        );
+        store.complete(id, sample_completed());
+
+        let (history, _rx) = store.subscribe(id).expect("job should exist");
+
+        assert_eq!(
+            history,
+            vec![
+                JobEvent::Queued,
+                JobEvent::Progress {
+                    stage: "SERRF normalization".into(),
+                    current: 1,
+                    total: 10
+                },
+                JobEvent::Completed,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_late_subscribers_receiver_only_fires_for_events_after_it_subscribed() {
+        // The history covers everything up to the subscribe() call; the live receiver
+        // must pick up exactly where that leaves off, with no gap and no duplicate.
+        let store = JobStore::new();
+        let (id, _rx) = store.create();
+        store.push_progress(
+            id,
+            JobEvent::Progress {
+                stage: "SERRF normalization".into(),
+                current: 1,
+                total: 10,
+            },
+        );
+
+        let (history, mut rx) = store.subscribe(id).expect("job should exist");
+        assert_eq!(history.len(), 2); // Queued + the one progress event pushed so far
+
+        store.push_progress(
+            id,
+            JobEvent::Progress {
+                stage: "SERRF normalization".into(),
+                current: 2,
+                total: 10,
+            },
+        );
+
+        assert!(rx.has_changed().unwrap());
+        assert_eq!(
+            *rx.borrow_and_update(),
+            JobEvent::Progress {
+                stage: "SERRF normalization".into(),
+                current: 2,
+                total: 10
+            }
+        );
     }
 
     #[test]
