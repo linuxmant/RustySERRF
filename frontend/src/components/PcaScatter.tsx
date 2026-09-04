@@ -34,7 +34,13 @@ export default function PcaScatter({ pc1, pc2, sampleType, batch, title }: PcaSc
       <Typography variant="subtitle1" gutterBottom>
         {title}
       </Typography>
-      <ScatterChart height={400} series={series} xAxis={[{ label: "PC1" }]} yAxis={[{ label: "PC2" }]} />
+      <ScatterChart
+        height={400}
+        series={series}
+        xAxis={[{ label: "PC1" }]}
+        yAxis={[{ label: "PC2" }]}
+        slotProps={{ legend: { direction: "horizontal", position: { vertical: "bottom", horizontal: "center" } } }}
+      />
     </Box>
   );
 }
