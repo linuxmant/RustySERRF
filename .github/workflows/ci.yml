@@ -24,6 +24,8 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Format check
         run: cargo fmt --check
@@ -76,6 +78,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - run: cargo build --release -p serrf-api
 
