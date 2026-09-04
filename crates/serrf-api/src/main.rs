@@ -14,11 +14,8 @@ async fn async_main() {
         .init();
 
     let port: u16 = std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(8080);
-    #[cfg(feature = "bundled-frontend")]
-    let host = "127.0.0.1";
-    #[cfg(not(feature = "bundled-frontend"))]
-    let host = "0.0.0.0";
-    let listener = tokio::net::TcpListener::bind((host, port)).await.unwrap();
+    let host = resolve_host(std::env::var("HOST").ok().as_deref());
+    let listener = tokio::net::TcpListener::bind((host.as_str(), port)).await.unwrap();
     let local_addr = listener.local_addr().unwrap();
     tracing::info!("serrf-api listening on {local_addr}");
 
@@ -34,6 +31,19 @@ async fn async_main() {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .unwrap();
+}
+
+/// Interface serrf-api listens on. Defaults to loopback-only regardless of deployment mode: the
+/// design only intends the frontend's own port to be reachable externally, with Next.js proxying
+/// `/api/*` to serrf-api over loopback (see frontend/next.config.js's `API_INTERNAL_URL`
+/// default) rather than serrf-api's port being exposed directly. An operator who genuinely needs
+/// serrf-api reachable from other hosts (e.g. it and the frontend run in separate containers)
+/// can opt in via the `HOST` env var.
+fn resolve_host(env_host: Option<&str>) -> String {
+    match env_host {
+        Some(host) if !host.is_empty() => host.to_string(),
+        _ => "127.0.0.1".to_string(),
+    }
 }
 
 async fn shutdown_signal() {
@@ -62,7 +72,26 @@ async fn wait_for_shutdown(ctrl_c: impl std::future::Future<Output = std::io::Re
 
 #[cfg(test)]
 mod tests {
-    use super::wait_for_shutdown;
+    use super::{resolve_host, wait_for_shutdown};
+
+    #[test]
+    fn defaults_to_loopback_only() {
+        // Only the frontend's port is meant to be reachable externally — Next.js proxies
+        // `/api/*` to serrf-api over loopback (see frontend/next.config.js's
+        // `API_INTERNAL_URL` default), so serrf-api itself should not default to listening on
+        // every interface.
+        assert_eq!(resolve_host(None), "127.0.0.1");
+    }
+
+    #[test]
+    fn an_explicit_host_env_var_overrides_the_loopback_default() {
+        assert_eq!(resolve_host(Some("0.0.0.0")), "0.0.0.0");
+    }
+
+    #[test]
+    fn an_empty_host_env_var_falls_back_to_the_loopback_default() {
+        assert_eq!(resolve_host(Some("")), "127.0.0.1");
+    }
 
     #[tokio::test]
     async fn resolves_as_soon_as_the_terminate_branch_completes() {
