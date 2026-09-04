@@ -14,6 +14,9 @@ export class ApiError extends Error {
 }
 
 async function parseErrorMessage(response: Response): Promise<string> {
+  if (response.status === 413) {
+    return "File is too large (max 10MB).";
+  }
   try {
     const body = (await response.json()) as { error?: string };
     return typeof body.error === "string" ? body.error : response.statusText;

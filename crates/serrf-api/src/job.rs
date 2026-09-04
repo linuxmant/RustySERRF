@@ -57,6 +57,7 @@ enum JobResult {
 struct JobHandle {
     events: tokio::sync::watch::Sender<JobEvent>,
     result: JobResult,
+    completed_at: Option<std::time::Instant>,
 }
 
 #[derive(Debug)]
@@ -86,6 +87,7 @@ impl JobStore {
             JobHandle {
                 events: tx,
                 result: JobResult::Pending,
+                completed_at: None,
             },
         );
         (id, rx)
@@ -100,6 +102,7 @@ impl JobStore {
     pub fn complete(&self, id: JobId, completed: CompletedJob) {
         if let Some(handle) = self.jobs.write().unwrap().get_mut(&id) {
             handle.result = JobResult::Done(Box::new(completed));
+            handle.completed_at = Some(std::time::Instant::now());
             let _ = handle.events.send_replace(JobEvent::Completed);
         }
     }
@@ -108,6 +111,7 @@ impl JobStore {
         if let Some(handle) = self.jobs.write().unwrap().get_mut(&id) {
             let _ = handle.events.send_replace(JobEvent::Failed { error: error.clone() });
             handle.result = JobResult::Errored(error);
+            handle.completed_at = Some(std::time::Instant::now());
         }
     }
 
@@ -123,6 +127,15 @@ impl JobStore {
             JobResult::Errored(e) => JobStoreLookup::Failed(e.clone()),
             JobResult::Done(completed) => JobStoreLookup::Ready(f(completed)),
         })
+    }
+
+    /// Drops any job whose terminal (Completed/Failed) event happened more than `older_than`
+    /// ago. A job that hasn't finished yet (`completed_at` is `None`) is never evicted.
+    pub fn evict_expired(&self, older_than: std::time::Duration) {
+        self.jobs.write().unwrap().retain(|_, handle| match handle.completed_at {
+            Some(completed_at) => completed_at.elapsed() < older_than,
+            None => true,
+        });
     }
 }
 
@@ -243,5 +256,50 @@ mod tests {
     fn with_completed_reports_not_found_for_an_unknown_job() {
         let store = JobStore::new();
         assert!(store.with_completed(JobId::new(), |c| c.compound_labels.clone()).is_none());
+    }
+
+    #[test]
+    fn evict_expired_removes_a_job_completed_before_the_cutoff() {
+        let store = JobStore::new();
+        let (id, _rx) = store.create();
+        store.complete(id, sample_completed());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        store.evict_expired(std::time::Duration::from_millis(5));
+
+        assert!(store.subscribe(id).is_none());
+    }
+
+    #[test]
+    fn evict_expired_keeps_a_job_completed_after_the_cutoff() {
+        let store = JobStore::new();
+        let (id, _rx) = store.create();
+        store.complete(id, sample_completed());
+
+        store.evict_expired(std::time::Duration::from_secs(60));
+
+        assert!(store.subscribe(id).is_some());
+    }
+
+    #[test]
+    fn evict_expired_never_removes_a_job_that_has_not_finished() {
+        let store = JobStore::new();
+        let (id, _rx) = store.create();
+
+        store.evict_expired(std::time::Duration::from_secs(0));
+
+        assert!(store.subscribe(id).is_some());
+    }
+
+    #[test]
+    fn evict_expired_removes_a_failed_job_completed_before_the_cutoff() {
+        let store = JobStore::new();
+        let (id, _rx) = store.create();
+        store.fail(id, "boom".to_string());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        store.evict_expired(std::time::Duration::from_millis(5));
+
+        assert!(store.subscribe(id).is_none());
     }
 }

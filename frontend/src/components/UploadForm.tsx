@@ -1,17 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Typography from "@mui/material/Typography";
 
 interface UploadFormProps {
   onSubmit: (file: File) => void;
-  errorMessage?: string;
 }
 
-export default function UploadForm({ onSubmit, errorMessage }: UploadFormProps) {
+export default function UploadForm({ onSubmit }: UploadFormProps) {
   const [file, setFile] = useState<File | null>(null);
 
   return (
@@ -38,11 +36,6 @@ export default function UploadForm({ onSubmit, errorMessage }: UploadFormProps) 
           Run SERRF normalization
         </Button>
       </Box>
-      {errorMessage && (
-        <Alert severity="error" sx={{ mt: 2 }}>
-          {errorMessage}
-        </Alert>
-      )}
     </Box>
   );
 }

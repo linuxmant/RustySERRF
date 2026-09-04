@@ -4,6 +4,7 @@ import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Container from "@mui/material/Container";
+import Typography from "@mui/material/Typography";
 import { useJob } from "../hooks/useJob";
 import ThemeToggle from "../components/ThemeToggle";
 import UploadForm from "../components/UploadForm";
@@ -16,7 +17,9 @@ export default function Home() {
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
-        <h1>RustySERRF</h1>
+        <Typography variant="h4" component="h1">
+          RustySERRF
+        </Typography>
         <ThemeToggle />
       </Box>
 

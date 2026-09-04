@@ -26,9 +26,9 @@ pub struct ResultJson {
 pub async fn result(State(state): State<AppState>, Path(id): Path<String>) -> Result<Json<ResultJson>, ApiError> {
     let job_id = JobId::parse(&id).map_err(|_| ApiError::BadRequest("invalid job id".to_string()))?;
 
-    let lookup = state
-        .jobs
-        .with_completed(job_id, |completed| {
+    let jobs = state.jobs.clone();
+    let lookup = tokio::task::spawn_blocking(move || {
+        jobs.with_completed(job_id, |completed| {
             // PCA excludes blank/None-sampleType columns entirely (app.R:1085-1086), matching
             // the report.png path in download.rs — otherwise the frontend renders an extra
             // "unknown" series for a group R never shows.
@@ -65,7 +65,10 @@ pub async fn result(State(state): State<AppState>, Path(id): Path<String>) -> Re
                 },
             }
         })
-        .ok_or(ApiError::NotFound)?;
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("result task panicked: {e}")))?
+    .ok_or(ApiError::NotFound)?;
 
     match lookup {
         JobStoreLookup::Ready(json) => Ok(Json(json)),

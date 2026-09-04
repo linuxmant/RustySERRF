@@ -108,3 +108,58 @@ async fn events_for_a_malformed_job_id_returns_400() {
 
     assert_eq!(response.status(), 400);
 }
+
+async fn spawn_minimal_events_app() -> (String, serrf_api::job::JobId) {
+    let jobs = serrf_api::job::JobStore::new();
+    let (job_id, _rx) = jobs.create();
+    let state = serrf_api::app::AppState { jobs };
+    let router = axum::Router::new()
+        .route("/api/jobs/:id/events", axum::routing::get(serrf_api::routes::events::events))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    (format!("http://{addr}"), job_id)
+}
+
+#[tokio::test]
+async fn events_stream_includes_a_keep_alive_ping_during_idle_job() {
+    let (base_url, job_id) = spawn_minimal_events_app().await;
+    let client = reqwest::Client::new();
+
+    let mut response = client.get(format!("{base_url}/api/jobs/{job_id}/events")).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+
+    // Read the response incrementally for 3.5 seconds to capture keep-alive pings.
+    // The stream never closes because the job never reaches a terminal state, so we
+    // cannot use .text().await which would wait forever. Instead, we read chunks
+    // with a timeout to give the keep-alive timer (3 seconds) a chance to fire.
+    let mut body = Vec::new();
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_millis(3500);
+
+    loop {
+        if start.elapsed() > timeout {
+            break;
+        }
+
+        let remaining = timeout.saturating_sub(start.elapsed());
+        match tokio::time::timeout(remaining, response.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                body.extend_from_slice(&chunk);
+            }
+            _ => break, // Stream closed, error, or timeout
+        }
+    }
+
+    let body_str = String::from_utf8_lossy(&body);
+
+    // Check for SSE keep-alive comment: a line that is exactly ":" (no space after colon).
+    // Axum's keep-alive mechanism sends bare-colon SSE comment frames.
+    assert!(
+        body_str.lines().any(|line| line == ":"),
+        "expected at least one SSE keep-alive comment line (exactly ':'), got:\n{body_str}"
+    );
+}

@@ -24,6 +24,21 @@ The port is being built in four stages:
 
 Design details live in [`docs/superpowers/specs/2026-08-20-rust-nextjs-port-design.md`](docs/superpowers/specs/2026-08-20-rust-nextjs-port-design.md).
 
+## Security posture
+
+`serrf-api` has no authentication and uses a permissive CORS policy
+(`CorsLayer::permissive()`). This is deliberate: it's a single-host research tool with no
+multi-tenant use case, meant to run behind a reverse proxy (or as the bundled-frontend
+standalone executable, which binds to `127.0.0.1` only — see below) rather than exposed
+directly to untrusted networks. In the non-bundled deployment mode, `serrf-api` binds
+`0.0.0.0` because that's required for Docker's port mapping to reach it; this is not a
+security boundary on its own and assumes the container itself is not exposed to an
+untrusted network. If this tool is ever deployed multi-tenant or on an untrusted network,
+add real authentication first — restricting CORS alone would not meaningfully help. Also
+worth knowing: an in-flight normalization job cannot be cancelled once started (it runs on
+a background thread pool), so a graceful shutdown signal waits for it to finish, up to a
+10-second cap — after that cap, or on a forced kill, the job's results are simply lost.
+
 ## Running the Rust CLI
 
 Requires a [Rust toolchain](https://rustup.rs/).

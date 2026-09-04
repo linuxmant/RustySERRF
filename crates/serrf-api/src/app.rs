@@ -7,6 +7,16 @@ pub fn build_app() -> axum::Router {
     let state = AppState {
         jobs: crate::job::JobStore::new(),
     };
+
+    let sweep_jobs = state.jobs.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5 * 60));
+        loop {
+            interval.tick().await;
+            sweep_jobs.evict_expired(std::time::Duration::from_secs(30 * 60));
+        }
+    });
+
     let router = axum::Router::new()
         .route("/health", axum::routing::get(health))
         .route("/api/jobs", axum::routing::post(crate::routes::upload::upload))
@@ -15,7 +25,17 @@ pub fn build_app() -> axum::Router {
         .route("/api/jobs/:id/result", axum::routing::get(crate::routes::result::result))
         .route("/api/jobs/:id/download", axum::routing::get(crate::routes::download::download))
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
+        // Deliberately permissive: this API has no authentication anywhere (by design — see
+        // README.md's "Security posture" section) and is meant to run on a single host behind
+        // a reverse proxy or as the bundled-frontend standalone exe, not exposed multi-tenant.
+        // Restricting the origin here would add friction without adding real security, since
+        // there's no auth boundary for CORS to protect in the first place.
         .layer(tower_http::cors::CorsLayer::permissive())
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http()
+                .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO))
+                .on_response(tower_http::trace::DefaultOnResponse::new().level(tracing::Level::INFO)),
+        )
         .with_state(state);
 
     // Note: `Router::layer` only wraps routes/fallback already registered at the time it's

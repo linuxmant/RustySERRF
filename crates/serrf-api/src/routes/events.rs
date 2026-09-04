@@ -2,7 +2,7 @@ use crate::app::AppState;
 use crate::error::ApiError;
 use crate::job::{JobEvent, JobId};
 use axum::extract::{Path, State};
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_core::Stream;
 
 pub async fn events(
@@ -25,7 +25,7 @@ pub async fn events(
         }
     };
 
-    Ok(Sse::new(stream))
+    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(3))))
 }
 
 fn to_sse_event(event: &JobEvent) -> Event {
