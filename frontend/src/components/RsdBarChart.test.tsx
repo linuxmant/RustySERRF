@@ -13,6 +13,13 @@ describe("RsdBarChart", () => {
     expect(screen.getByText("SERRF QC-RSD")).toBeInTheDocument();
   });
 
+  it("labels each bar with its RSD value as a percentage, not a raw fraction", () => {
+    render(<RsdBarChart compoundLabels={["c1"]} qcRsdRaw={[0.234]} qcRsdSerrf={[0.05]} />);
+
+    expect(screen.getByText("23.4%")).toBeInTheDocument();
+    expect(screen.getByText("5.0%")).toBeInTheDocument();
+  });
+
   it("gives the chart enough width to stay readable at real compound counts, inside a horizontally scrollable container", () => {
     const compoundLabels = Array.from({ length: 268 }, (_, i) => `c${i}`);
     const values = compoundLabels.map(() => 0.1);

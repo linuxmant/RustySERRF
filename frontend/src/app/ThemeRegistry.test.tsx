@@ -1,37 +1,26 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { useContext } from "react";
-import ThemeRegistry, { ColorModeContext } from "./ThemeRegistry";
-
-function ModeProbe() {
-  const { mode } = useContext(ColorModeContext);
-  return <div data-testid="mode">{mode}</div>;
-}
+import Box from "@mui/material/Box";
+import ThemeRegistry from "./ThemeRegistry";
 
 describe("ThemeRegistry", () => {
-  afterEach(() => {
-    delete document.documentElement.dataset.colorMode;
-  });
-
-  it("picks up the color mode already stamped on <html> by the pre-hydration script, without waiting for an effect", () => {
-    document.documentElement.dataset.colorMode = "dark";
-
+  it("renders children through the app's theme", () => {
     render(
       <ThemeRegistry>
-        <ModeProbe />
+        <button>hello</button>
       </ThemeRegistry>
     );
 
-    expect(screen.getByTestId("mode")).toHaveTextContent("dark");
+    expect(screen.getByRole("button", { name: "hello" })).toBeInTheDocument();
   });
 
-  it("defaults to light when no color mode has been stamped on <html>", () => {
+  it("applies the app's teal primary color, not the MUI default blue", () => {
     render(
       <ThemeRegistry>
-        <ModeProbe />
+        <Box data-testid="probe" sx={{ color: "primary.main" }} />
       </ThemeRegistry>
     );
 
-    expect(screen.getByTestId("mode")).toHaveTextContent("light");
+    expect(getComputedStyle(screen.getByTestId("probe")).color).toBe("rgb(46, 125, 107)");
   });
 });

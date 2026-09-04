@@ -69,7 +69,7 @@ longer part of this repo.
 
 ## Building the standalone Windows executable
 
-`serrf-api` can be built as a single portable `serrf-api-windows.exe` with the Next.js frontend
+`serrf-api` can be built as a single portable `RustySERRF.exe` with the Next.js frontend
 embedded, so a non-technical Windows user can double-click it — no Docker, Rust, or Node required
 on their machine.
 
@@ -86,7 +86,7 @@ on their machine.
 ./scripts/build-windows-release.sh
 ```
 
-This produces `dist/serrf-api-windows.exe` (~11 MB). `dist/` is gitignored — the `.exe` is a build
+This produces `dist/RustySERRF.exe` (~11 MB). `dist/` is gitignored — the `.exe` is a build
 artifact, not something committed to the repo.
 
 **A few things worth knowing before handing this to someone:**
