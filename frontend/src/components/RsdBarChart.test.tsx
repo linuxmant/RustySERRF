@@ -13,11 +13,11 @@ describe("RsdBarChart", () => {
     expect(screen.getByText("SERRF QC-RSD")).toBeInTheDocument();
   });
 
-  it("labels each bar with its RSD value as a percentage, not a raw fraction", () => {
-    render(<RsdBarChart compoundLabels={["c1"]} qcRsdRaw={[0.234]} qcRsdSerrf={[0.05]} />);
+  it("does not label bars with their percentage value -- that's reserved for the exported PNG report", () => {
+    const { container } = render(<RsdBarChart compoundLabels={["c1"]} qcRsdRaw={[0.234]} qcRsdSerrf={[0.05]} />);
 
-    expect(screen.getByText("23.4%")).toBeInTheDocument();
-    expect(screen.getByText("5.0%")).toBeInTheDocument();
+    expect(screen.queryByText("23.4%")).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".MuiBarChart-label")).toHaveLength(0);
   });
 
   it("gives the chart enough width to stay readable at real compound counts, inside a horizontally scrollable container", () => {
