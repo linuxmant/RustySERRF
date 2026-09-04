@@ -4,35 +4,24 @@ import { createTheme, type Theme } from "@mui/material/styles";
 // marketing palette. Paper is a cool clinical off-white (not the cream+serif cliché); the
 // primary accent is the muted teal of a chromatography trace line; the secondary accent is
 // used sparingly for contrast (e.g. before/after chart series, hover states).
-const light = {
+const palette = {
   paper: "#F7F9F9",
   surface: "#FFFFFF",
-  ink: "#152521",
+  ink: "#152421",
   border: "#DDE3E1",
   teal: "#2E7D6B",
   amber: "#C9622B",
 };
 
-const dark = {
-  paper: "#0F1614",
-  surface: "#182220",
-  ink: "#E8EDEB",
-  border: "#28332F",
-  teal: "#4FB89E",
-  amber: "#E08A4F",
-};
-
-export function getTheme(mode: "light" | "dark"): Theme {
-  const tokens = mode === "light" ? light : dark;
-
+export function getTheme(): Theme {
   return createTheme({
     palette: {
-      mode,
-      background: { default: tokens.paper, paper: tokens.surface },
-      text: { primary: tokens.ink },
-      primary: { main: tokens.teal },
-      secondary: { main: tokens.amber },
-      divider: tokens.border,
+      mode: "light",
+      background: { default: palette.paper, paper: palette.surface },
+      text: { primary: palette.ink },
+      primary: { main: palette.teal },
+      secondary: { main: palette.amber },
+      divider: palette.border,
     },
     shape: { borderRadius: 10 },
     typography: {

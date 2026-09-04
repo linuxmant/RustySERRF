@@ -7,7 +7,6 @@ import Container from "@mui/material/Container";
 import Paper from "@mui/material/Paper";
 import Typography from "@mui/material/Typography";
 import { useJob } from "../hooks/useJob";
-import ThemeToggle from "../components/ThemeToggle";
 import ChromatogramDivider from "../components/ChromatogramDivider";
 import IntroSection from "../components/IntroSection";
 import UploadForm from "../components/UploadForm";
@@ -19,16 +18,13 @@ export default function Home() {
 
   return (
     <Container maxWidth="md" sx={{ py: 6 }}>
-      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", mb: 1 }}>
-        <Box>
-          <Typography variant="h4" component="h1">
-            RustySERRF
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Remove systematic error from metabolomics batches using random forest normalization.
-          </Typography>
-        </Box>
-        <ThemeToggle />
+      <Box sx={{ mb: 1 }}>
+        <Typography variant="h4" component="h1">
+          RustySERRF
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Remove systematic error from metabolomics batches using random forest normalization.
+        </Typography>
       </Box>
 
       <Box sx={{ my: 3 }}>

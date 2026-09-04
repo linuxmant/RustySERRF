@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import path from "node:path";
 
-test("upload a dataset, watch progress, view results, download, and toggle theme", async ({ page }) => {
+test("upload a dataset, watch progress, view results, and download", async ({ page }) => {
   await page.goto("/");
 
   await page
@@ -16,11 +16,4 @@ test("upload a dataset, watch progress, view results, download, and toggle theme
   await page.getByRole("link", { name: /download results/i }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("serrf-results.zip");
-
-  const toggle = page.getByRole("button", { name: /toggle theme/i });
-  await expect(toggle).toHaveAttribute("aria-pressed", "false");
-  await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-pressed", "true");
-  const persisted = await page.evaluate(() => localStorage.getItem("color-mode"));
-  expect(persisted).toBe("dark");
 });
