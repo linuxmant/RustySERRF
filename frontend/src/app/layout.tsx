@@ -1,6 +1,20 @@
 import type { Metadata } from "next";
+import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import ThemeRegistry from "./ThemeRegistry";
 import "./globals.css";
+
+const plexSans = IBM_Plex_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-plex-sans",
+  display: "swap",
+});
+const plexMono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  variable: "--font-plex-mono",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "RustySERRF",
@@ -18,9 +32,9 @@ export const metadata: Metadata = {
 // via CSS custom properties instead — a larger migration, out of scope here.
 //
 // Runs before hydration to stamp document.documentElement with the persisted (or OS-preferred)
-// color mode and paint matching MUI-default colors immediately, so ThemeRegistry's first client
+// color mode and paint matching theme colors immediately, so ThemeRegistry's first client
 // render — which reads the same attribute via getInitialMode() — never has to correct a
-// wrongly-guessed initial theme after the fact.
+// wrongly-guessed initial theme after the fact. Colors here must match theme.ts's palette.
 const COLOR_MODE_INIT_SCRIPT = `(function () {
   try {
     var stored = localStorage.getItem("color-mode");
@@ -29,14 +43,14 @@ const COLOR_MODE_INIT_SCRIPT = `(function () {
       : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
     document.documentElement.dataset.colorMode = mode;
     document.documentElement.style.colorScheme = mode;
-    document.documentElement.style.backgroundColor = mode === "dark" ? "#121212" : "#fff";
-    document.documentElement.style.color = mode === "dark" ? "#fff" : "rgba(0, 0, 0, 0.87)";
+    document.documentElement.style.backgroundColor = mode === "dark" ? "#0F1614" : "#F7F9F9";
+    document.documentElement.style.color = mode === "dark" ? "#E8EDEB" : "#152521";
   } catch (e) {}
 })();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className={`${plexSans.variable} ${plexMono.variable}`}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: COLOR_MODE_INIT_SCRIPT }} />
       </head>
