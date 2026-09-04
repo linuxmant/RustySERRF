@@ -1,6 +1,8 @@
 use crate::error::SerrfError;
 use crate::pca::PcaResult;
+use plotters::coord::ranged1d::{IntoSegmentedCoord, SegmentValue};
 use plotters::prelude::*;
+use plotters::style::text_anchor::{HPos, Pos, VPos};
 use std::collections::HashMap;
 
 const PANEL_HEIGHT: u32 = 350;
@@ -108,6 +110,27 @@ pub fn render_report(
     Ok(())
 }
 
+/// Pixel margin trimmed off each side of a segment by [`Histogram::margin`] — this is what makes
+/// the exported bars visibly thinner than the full width of their category slot, while
+/// `into_segmented()` keeps them centered within it.
+const BAR_MARGIN_PX: u32 = 70;
+
+/// Color for the bar at segment `x` (0 = raw/"none", 1 = SERRF-normalized). Kept as its own
+/// function so the raw-vs-SERRF color assignment is independently testable from the rendering.
+fn rsd_bar_style(x: &SegmentValue<i32>, _value: &f64) -> ShapeStyle {
+    match x {
+        SegmentValue::CenterOf(0) | SegmentValue::Exact(0) => BLACK.filled(),
+        _ => RGBColor(255, 191, 0).filled(),
+    }
+}
+
+/// Text style for the percent labels above each bar: horizontally centered on the bar (not
+/// left-anchored at a bar edge) and anchored above its own baseline, matching R's `text(...,
+/// pos = 3)` placement.
+fn rsd_label_style<'a>() -> TextStyle<'a> {
+    TextStyle::from(("sans-serif", 18).into_font()).pos(Pos::new(HPos::Center, VPos::Bottom))
+}
+
 fn draw_rsd_bars(area: &DrawingArea<BitMapBackend, plotters::coord::Shift>, title: &str, raw: &[f64], serrf: &[f64]) -> Result<(), SerrfError> {
     let raw_median = median(raw) * 100.0;
     let serrf_median = median(serrf) * 100.0;
@@ -118,25 +141,27 @@ fn draw_rsd_bars(area: &DrawingArea<BitMapBackend, plotters::coord::Shift>, titl
         .margin(20)
         .x_label_area_size(30)
         .y_label_area_size(40)
-        .build_cartesian_2d(0..2, 0.0..max_val)
+        .build_cartesian_2d((0..1).into_segmented(), 0.0..max_val)
         .map_err(|e| SerrfError::Parse(e.to_string()))?;
     chart
         .configure_mesh()
         .disable_mesh()
         .x_labels(2)
         .x_label_formatter(&|x| match x {
-            0 => "none".to_string(),
-            1 => "SERRF".to_string(),
+            SegmentValue::CenterOf(0) => "none".to_string(),
+            SegmentValue::CenterOf(1) => "SERRF".to_string(),
             _ => String::new(),
         })
         .y_desc("RSD (%)")
         .draw()
         .map_err(|e| SerrfError::Parse(e.to_string()))?;
     chart
-        .draw_series(vec![
-            Rectangle::new([(0, 0.0), (1, raw_median)], BLACK.filled()),
-            Rectangle::new([(1, 0.0), (2, serrf_median)], RGBColor(255, 191, 0).filled()),
-        ])
+        .draw_series(
+            Histogram::vertical(&chart)
+                .style_func(rsd_bar_style)
+                .margin(BAR_MARGIN_PX)
+                .data([(0, raw_median), (1, serrf_median)]),
+        )
         .map_err(|e| SerrfError::Parse(e.to_string()))?;
     // Labels sit above each bar's top edge (like R's `text(..., pos = 3)`), not on top of it —
     // placed directly on the bar, a black-on-black "none" label would be invisible.
@@ -145,7 +170,7 @@ fn draw_rsd_bars(area: &DrawingArea<BitMapBackend, plotters::coord::Shift>, titl
         .draw_series(
             [(0, raw_median), (1, serrf_median)]
                 .iter()
-                .map(|&(x, v)| Text::new(format!("{v:.2}%"), (x, v + label_margin), ("sans-serif", 18).into_font())),
+                .map(|&(x, v)| Text::new(format!("{v:.2}%"), (SegmentValue::CenterOf(x), v + label_margin), rsd_label_style())),
         )
         .map_err(|e| SerrfError::Parse(e.to_string()))?;
     Ok(())
@@ -346,6 +371,23 @@ mod tests {
         let c2 = color_for_category("validate2", &categories);
         assert_ne!(c1, c2, "different categories must get different colors");
         assert_eq!(color_for_category("validate", &categories), c1, "same category must always get the same color");
+    }
+
+    #[test]
+    fn rsd_label_style_is_centered_above_the_bar() {
+        // The percent label must sit horizontally centered on the (now-thin) bar and above its
+        // top edge, not left-anchored at the bar's edge like a plain default text style would be.
+        let style = rsd_label_style();
+        assert!(matches!(style.pos.h_pos, HPos::Center));
+        assert!(matches!(style.pos.v_pos, VPos::Bottom));
+    }
+
+    #[test]
+    fn rsd_bar_style_assigns_distinct_colors_to_raw_and_serrf() {
+        let raw_style = rsd_bar_style(&SegmentValue::CenterOf(0), &0.0);
+        let serrf_style = rsd_bar_style(&SegmentValue::CenterOf(1), &0.0);
+        assert_eq!(raw_style.color.rgb(), BLACK.rgb());
+        assert_eq!(serrf_style.color.rgb(), RGBColor(255, 191, 0).rgb());
     }
 
     #[test]
