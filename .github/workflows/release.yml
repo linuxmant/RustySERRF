@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      should_release: ${{ steps.version.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Determine version and whether it's already released
+        id: version
+        run: |
+          version=$(grep -m1 '^version' crates/serrf-api/Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git rev-parse "v$version" >/dev/null 2>&1; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "Tag v$version already exists -- crates/serrf-api/Cargo.toml wasn't bumped, skipping release."
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "v$version has no tag yet -- building a release."
+          fi
+
+  build-linux:
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build
+        run: ./scripts/build-linux-release.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RustySERRF-linux
+          path: dist/RustySERRF-linux
+          if-no-files-found: error
+
+  build-windows:
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build
+        run: ./scripts/build-windows-release.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RustySERRF-windows
+          path: dist/RustySERRF.exe
+          if-no-files-found: error
+
+  publish-release:
+    needs: [check-version, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: RustySERRF-linux
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: RustySERRF-windows
+          path: dist
+
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          gh release create "v$VERSION" \
+            dist/RustySERRF-linux dist/RustySERRF.exe \
+            --title "v$VERSION" \
+            --generate-notes
