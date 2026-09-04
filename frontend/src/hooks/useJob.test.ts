@@ -53,6 +53,41 @@ describe("useJob", () => {
     );
   });
 
+  it("renders every intermediate progress event even when several arrive in one synchronous burst", async () => {
+    // Simulates the real EventSource delivering several already-buffered SSE messages
+    // back-to-back within a single browser task (plausible once the backend is fast
+    // enough that many progress events are flushed before the client's JS gets a turn).
+    // Without forcing each update to commit individually, React 18's automatic batching
+    // collapses all setState calls inside one synchronous callback into a single render,
+    // so only the LAST value would ever reach the screen.
+    let emit: (event: JobEvent) => void = () => {};
+    vi.mocked(api.uploadDataset).mockResolvedValue({ jobId: "job-1" });
+    vi.mocked(api.subscribeToJobEvents).mockImplementation((_jobId, onEvent) => {
+      emit = onEvent;
+      return () => {};
+    });
+
+    const seenCurrentValues: number[] = [];
+    const { result } = renderHook(() => {
+      const job = useJob();
+      if (job.state.phase === "processing" && job.state.current !== undefined) {
+        seenCurrentValues.push(job.state.current);
+      }
+      return job;
+    });
+
+    await act(async () => result.current.submit(new File(["x"], "dataset.csv")));
+    await waitFor(() => expect(result.current.state.phase).toBe("processing"));
+
+    act(() => {
+      emit({ status: "progress", stage: "SERRF normalization", current: 1, total: 10 });
+      emit({ status: "progress", stage: "SERRF normalization", current: 2, total: 10 });
+      emit({ status: "progress", stage: "SERRF normalization", current: 3, total: 10 });
+    });
+
+    expect(seenCurrentValues).toEqual([1, 2, 3]);
+  });
+
   it("moves to error when fetching the result fails after the job completes", async () => {
     let emit: (event: JobEvent) => void = () => {};
     vi.mocked(api.uploadDataset).mockResolvedValue({ jobId: "job-1" });

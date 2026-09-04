@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { fetchJobResult, subscribeToJobEvents, uploadDataset } from "../lib/api";
 import type { JobEvent, ResultJson } from "../lib/types";
 
@@ -30,7 +31,15 @@ export function useJob() {
         setState({ phase: "processing", jobId });
         unsubscribeRef.current = subscribeToJobEvents(jobId, (event: JobEvent) => {
           if (event.status === "progress") {
-            setState({ phase: "processing", jobId, stage: event.stage, current: event.current, total: event.total });
+            // flushSync forces this render to commit immediately instead of being batched
+            // with whatever other progress events the EventSource happens to deliver in
+            // the same browser task — without it, React 18's automatic batching can
+            // silently collapse a burst of rapid updates into just the last one, making
+            // the UI appear to "jump" straight to a late stage instead of animating through
+            // each one (see useJob.test.ts's "synchronous burst" regression test).
+            flushSync(() => {
+              setState({ phase: "processing", jobId, stage: event.stage, current: event.current, total: event.total });
+            });
           } else if (event.status === "completed") {
             unsubscribeRef.current?.();
             fetchJobResult(jobId)
