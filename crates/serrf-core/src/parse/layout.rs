@@ -34,7 +34,10 @@ pub(crate) fn grid_to_dataset(grid: &[Vec<Option<String>>]) -> Result<Dataset, S
     let vertical_field_names: Vec<String> = (0..=compound_row_start)
         .map(|r| grid[r][sample_col_start].clone().unwrap_or_default())
         .collect();
-    let field_names_p = rotate_last_to_front(&vertical_field_names);
+    let field_names_p: Vec<String> = rotate_last_to_front(&vertical_field_names)
+        .into_iter()
+        .map(|n| canonicalize_field_name(&n))
+        .collect();
     if field_names_p.first().map(String::as_str) != Some("label") {
         return Err(SerrfError::Parse(
             "cannot find 'label' in your data. Please check the data format requirement.".into(),
@@ -106,6 +109,18 @@ pub(crate) fn grid_to_dataset(grid: &[Vec<Option<String>>]) -> Result<Dataset, S
         },
         values,
     })
+}
+
+// The sample-metadata header row names (batch/sampleType/time) and the corner "label" cell are
+// recognized case-insensitively, since users routinely capitalize them differently (Batch, TIME,
+// Label, ...). Any other column name is left exactly as written -- only these known keywords are
+// canonicalized, so downstream code can keep looking them up by one fixed-case key.
+fn canonicalize_field_name(name: &str) -> String {
+    const KNOWN: &[&str] = &["label", "batch", "sampleType", "time"];
+    match KNOWN.iter().find(|known| name.eq_ignore_ascii_case(known)) {
+        Some(known) => known.to_string(),
+        None => name.to_string(),
+    }
 }
 
 fn rotate_last_to_front(v: &[String]) -> Vec<String> {
@@ -190,5 +205,20 @@ mod tests {
         grid[3][1] = None; // corner cell no longer says "label"
         let err = grid_to_dataset(&grid).unwrap_err();
         assert!(err.to_string().contains("label"));
+    }
+
+    #[test]
+    fn recognizes_batch_sampletype_time_and_label_headers_regardless_of_case() {
+        let mut grid = sample_grid();
+        grid[0][1] = cell("Batch");
+        grid[1][1] = cell("SampleType");
+        grid[2][1] = cell("TIME");
+        grid[3][1] = cell("Label");
+
+        let dataset = grid_to_dataset(&grid).unwrap();
+
+        assert_eq!(dataset.samples.columns["batch"], vec!["A", "B"]);
+        assert_eq!(dataset.samples.columns["sampleType"], vec!["qc", "sample"]);
+        assert_eq!(dataset.samples.columns["time"], vec!["1", "2"]);
     }
 }
